@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FC Tank Battle</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="cabinet">
+      <section class="playfield">
+        <canvas id="game" width="832" height="768" aria-label="FC tank battle canvas"></canvas>
+        <div id="overlay" class="overlay">
+          <h1>FC TANK BATTLE</h1>
+          <p>按 Enter / Xbox Start 开始</p>
+          <p class="small">方向键或左摇杆移动，Space / A 开火，P 暂停</p>
+        </div>
+      </section>
+      <aside class="panel">
+        <div>
+          <span>1P</span>
+          <strong id="score">000000</strong>
+        </div>
+        <div>
+          <span>STAGE</span>
+          <strong id="stage">01</strong>
+        </div>
+        <div>
+          <span>LIVES</span>
+          <strong id="lives">03</strong>
+        </div>
+        <div>
+          <span>ENEMY</span>
+          <strong id="enemy">20</strong>
+        </div>
+        <div>
+          <span>PAD</span>
+          <strong id="pad">键盘</strong>
+        </div>
+      </aside>
+    </main>
+    <script src="game.js"></script>
+  </body>
+</html>
