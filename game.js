@@ -124,7 +124,6 @@ let particles = [];
 let bonuses = [];
 let baseAlive = true;
 const baseRect = { x: 12 * TILE, y: 22 * TILE, w: 2 * TILE, h: 2 * TILE };
-const baseGuard = { x: 11 * TILE, y: 21 * TILE, w: 4 * TILE, h: 3 * TILE };
 const ai1 = window.TankPartnerAI?.createController("1P");
 const ai2 = window.TankPartnerAI?.createController("2P");
 let p1Idle = 0;
@@ -520,10 +519,6 @@ function tileInBaseGuard(x, y) {
   return x >= 11 && x <= 14 && y >= 21 && y <= 23;
 }
 
-function aiBulletBlockedByBaseGuard(bullet, tile) {
-  return bullet.aiControlled && !bullet.enemy && tileInBaseGuard(tile.x, tile.y) && (tile.t === "B" || tile.t === "E");
-}
-
 function aiShotSafe(tank) {
   const d = DIRS[tank.dir];
   let x = tank.x + tank.w / 2;
@@ -552,10 +547,6 @@ function updateBullets(dt) {
     if (box.x < 0 || box.y < 0 || box.x > canvas.width || box.y > canvas.height) b.dead = true;
     for (const tile of solidTiles(box)) {
       b.dead = true;
-      if (aiBulletBlockedByBaseGuard(b, tile)) {
-        burst(b.x, b.y, colors.bullet, 4);
-        break;
-      }
       if (tile.t === "B") setTile(tile.x, tile.y, ".");
       if (tile.t === "E") damageBase();
       burst(b.x, b.y, tile.t === "S" ? colors.steel : tile.t === "E" ? colors.gold : colors.brick, 8);
