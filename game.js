@@ -9,6 +9,11 @@ const ui = {
   pad: document.getElementById("pad"),
   p1mode: document.getElementById("p1mode"),
   p2mode: document.getElementById("p2mode"),
+  p1LivesStart: document.getElementById("p1LivesStart"),
+  p2LivesStart: document.getElementById("p2LivesStart"),
+  overlayTitle: document.getElementById("overlayTitle"),
+  overlayPrompt: document.getElementById("overlayPrompt"),
+  overlayHelp: document.getElementById("overlayHelp"),
 };
 
 const TILE = 32;
@@ -119,6 +124,7 @@ let particles = [];
 let bonuses = [];
 let baseAlive = true;
 const baseRect = { x: 12 * TILE, y: 22 * TILE, w: 2 * TILE, h: 2 * TILE };
+const baseGuard = { x: 11 * TILE, y: 21 * TILE, w: 4 * TILE, h: 3 * TILE };
 const ai1 = window.TankPartnerAI?.createController("1P");
 const ai2 = window.TankPartnerAI?.createController("2P");
 let p1Idle = 0;
@@ -261,18 +267,27 @@ function loadStage() {
 function updateUi() {
   ui.score.textContent = String(score).padStart(6, "0");
   ui.stage.textContent = String(stageIndex + 1).padStart(2, "0");
-  ui.lives.textContent = String(lives).padStart(2, "0");
+  ui.lives.textContent = `${formatLives(lives)}/${formatLives(lives2)}`;
   ui.enemy.textContent = String(enemiesLeft + enemies.length).padStart(2, "0");
   ui.p1mode.textContent = p1Auto ? "AI" : "人工";
   ui.p2mode.textContent = p2Human ? "人工" : "AI";
+}
+
+function formatLives(value) {
+  return value === Infinity ? "∞" : String(value).padStart(2, "0");
+}
+
+function readLifeSetting(select, fallback = 3) {
+  if (!select) return fallback;
+  return select.value === "Infinity" ? Infinity : Math.max(3, Number(select.value) || fallback);
 }
 
 function startGame() {
   newAudio();
   audio.resume();
   score = 0;
-  lives = 3;
-  lives2 = 3;
+  lives = readLifeSetting(ui.p1LivesStart);
+  lives2 = readLifeSetting(ui.p2LivesStart);
   stageIndex = 0;
   state = "playing";
   overlay.classList.add("hidden");
@@ -280,7 +295,7 @@ function startGame() {
   sfx.start();
 }
 
-function fire(tank) {
+function fire(tank, aiControlled = false) {
   if (tank.cooldown > 0 || !tank.alive) return;
   if (!tank.enemy && bullets.filter((b) => b.owner === tank).length >= tank.maxBullets) return;
   const d = DIRS[tank.dir];
@@ -293,6 +308,7 @@ function fire(tank) {
     h: 6,
     dir: tank.dir,
     speed: tank.enemy ? 230 : 310,
+    aiControlled,
   });
   tank.cooldown = tank.fireDelay;
   sfx.fire();
@@ -468,7 +484,7 @@ function hitTank(tank, bullet) {
   } else {
     teachAis(tank.kind === "player" ? "ally-hit" : "self-hit", -1);
     if (tank.kind === "player") {
-      lives--;
+      if (lives !== Infinity) lives--;
       if (lives >= 0) {
         player = makeTank("player", 8 * TILE + 2, 22 * TILE + 2);
         player.invuln = 2.4;
@@ -476,7 +492,7 @@ function hitTank(tank, bullet) {
         endGame(false);
       }
     } else {
-      lives2--;
+      if (lives2 !== Infinity) lives2--;
       if (lives2 >= 0) {
         player2 = makeTank("player2", 16 * TILE + 2, 22 * TILE + 2);
         player2.invuln = 2.4;
@@ -500,6 +516,33 @@ function damageBase() {
   endGame(false);
 }
 
+function tileInBaseGuard(x, y) {
+  return x >= 11 && x <= 14 && y >= 21 && y <= 23;
+}
+
+function aiBulletBlockedByBaseGuard(bullet, tile) {
+  return bullet.aiControlled && !bullet.enemy && tileInBaseGuard(tile.x, tile.y) && (tile.t === "B" || tile.t === "E");
+}
+
+function aiShotSafe(tank) {
+  const d = DIRS[tank.dir];
+  let x = tank.x + tank.w / 2;
+  let y = tank.y + tank.h / 2;
+  for (let i = 0; i < 28; i++) {
+    x += d.x * TILE * 0.5;
+    y += d.y * TILE * 0.5;
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return true;
+    const tx = Math.floor(x / TILE);
+    const ty = Math.floor(y / TILE);
+    const t = tileAt(tx, ty);
+    if (tileInBaseGuard(tx, ty) && (t === "B" || t === "E")) return false;
+    if (t === "S" || t === "B" || t === "E" || t === "W") return true;
+    if ([player, player2].some((ally) => ally?.alive && ally !== tank && rects({ x: x - 8, y: y - 8, w: 16, h: 16 }, ally.box()))) return false;
+    if (enemies.some((enemy) => enemy.alive && rects({ x: x - 3, y: y - 3, w: 6, h: 6 }, enemy.box()))) return true;
+  }
+  return true;
+}
+
 function updateBullets(dt) {
   for (const b of bullets) {
     const d = DIRS[b.dir];
@@ -509,6 +552,10 @@ function updateBullets(dt) {
     if (box.x < 0 || box.y < 0 || box.x > canvas.width || box.y > canvas.height) b.dead = true;
     for (const tile of solidTiles(box)) {
       b.dead = true;
+      if (aiBulletBlockedByBaseGuard(b, tile)) {
+        burst(b.x, b.y, colors.bullet, 4);
+        break;
+      }
       if (tile.t === "B") setTile(tile.x, tile.y, ".");
       if (tile.t === "E") damageBase();
       burst(b.x, b.y, tile.t === "S" ? colors.steel : tile.t === "E" ? colors.gold : colors.brick, 8);
@@ -573,7 +620,9 @@ function collectBonuses(dt) {
 function endGame(win) {
   state = "over";
   overlay.classList.remove("hidden");
-  overlay.innerHTML = `<h1>${win ? "STAGE CLEAR" : "GAME OVER"}</h1><p>按 Enter / Xbox Start 重新开始</p><p class="small">得分 ${String(score).padStart(6, "0")}</p>`;
+  ui.overlayTitle.textContent = win ? "STAGE CLEAR" : "GAME OVER";
+  ui.overlayPrompt.textContent = "按 Enter / Xbox Start 重新开始";
+  ui.overlayHelp.textContent = `得分 ${String(score).padStart(6, "0")}`;
 }
 
 function nextStage() {
@@ -597,7 +646,7 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled) {
   if (autoControlled && ai) {
     const action = ai.decide(aiContext(tank), dt);
     if (action.dir) moveTank(tank, action.dir, dt);
-    if (action.fire) fire(tank);
+    if (action.fire && aiShotSafe(tank)) fire(tank, true);
   } else {
     if (humanDir) moveTank(tank, humanDir, dt);
     if (humanFire) fire(tank);
@@ -812,7 +861,9 @@ window.addEventListener("keydown", (e) => {
   if (!KEYS.has(e.code)) pressed.add(e.code);
   KEYS.add(e.code);
   if ((state === "title" || state === "over") && titleStartRequested(e)) {
-    overlay.innerHTML = '<h1>FC TANK BATTLE</h1><p>按 Enter / Xbox Start 开始</p><p class="small">1P 方向键/WASD + Space，2P IJKL + U；无人操作会由 AI 托管</p>';
+    ui.overlayTitle.textContent = "FC TANK BATTLE";
+    ui.overlayPrompt.textContent = "按 Enter / Xbox Start 开始";
+    ui.overlayHelp.textContent = "1P 方向键/WASD + Space，2P IJKL + U；无人操作会由 AI 托管";
     startGame();
   }
   if (e.code === "KeyP" && (state === "playing" || state === "paused")) state = state === "playing" ? "paused" : "playing";
