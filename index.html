@@ -11,9 +11,29 @@
       <section class="playfield">
         <canvas id="game" width="832" height="768" aria-label="FC tank battle canvas"></canvas>
         <div id="overlay" class="overlay">
-          <h1>FC TANK BATTLE</h1>
-          <p>按 Enter / Xbox Start 开始</p>
-          <p class="small">1P 方向键/WASD + Space，2P IJKL + U；无人操作会由 AI 托管</p>
+          <h1 id="overlayTitle">FC TANK BATTLE</h1>
+          <p id="overlayPrompt">按 Enter / Xbox Start 开始</p>
+          <div class="start-options">
+            <label>
+              <span>1P LIFE</span>
+              <select id="p1LivesStart">
+                <option value="3" selected>3</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="Infinity">∞</option>
+              </select>
+            </label>
+            <label>
+              <span>2P LIFE</span>
+              <select id="p2LivesStart">
+                <option value="3" selected>3</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="Infinity">∞</option>
+              </select>
+            </label>
+          </div>
+          <p id="overlayHelp" class="small">1P 方向键/WASD + Space，2P IJKL + U；无人操作会由 AI 托管</p>
         </div>
       </section>
       <aside class="panel">
