@@ -13,7 +13,7 @@
         <div id="overlay" class="overlay">
           <h1>FC TANK BATTLE</h1>
           <p>按 Enter / Xbox Start 开始</p>
-          <p class="small">方向键或左摇杆移动，Space / A 开火，P 暂停</p>
+          <p class="small">1P 方向键/WASD + Space，2P IJKL + U；无人操作会由 AI 托管</p>
         </div>
       </section>
       <aside class="panel">
@@ -37,8 +37,17 @@
           <span>PAD</span>
           <strong id="pad">键盘</strong>
         </div>
+        <div>
+          <span>1P MODE</span>
+          <strong id="p1mode">人工</strong>
+        </div>
+        <div>
+          <span>2P MODE</span>
+          <strong id="p2mode">AI</strong>
+        </div>
       </aside>
     </main>
+    <script src="ai.js"></script>
     <script src="game.js"></script>
   </body>
 </html>
