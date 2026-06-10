@@ -7,6 +7,8 @@ const ui = {
   lives: document.getElementById("lives"),
   enemy: document.getElementById("enemy"),
   pad: document.getElementById("pad"),
+  p1mode: document.getElementById("p1mode"),
+  p2mode: document.getElementById("p2mode"),
 };
 
 const TILE = 32;
@@ -20,6 +22,7 @@ const DIRS = {
 };
 const KEYS = new Set();
 const pressed = new Set();
+const P1_AUTO_SECONDS = 10;
 
 let audio;
 let gamepadIndex = null;
@@ -29,6 +32,7 @@ let lastTime = 0;
 let state = "title";
 let score = 0;
 let lives = 3;
+let lives2 = 3;
 let stageIndex = 0;
 let enemiesLeft = 20;
 let spawnClock = 0;
@@ -44,6 +48,7 @@ const colors = {
   forest: "#236b35",
   ice: "#a9e1dc",
   player: "#d7c25b",
+  player2: "#6db6d8",
   enemy: "#70a65d",
   fast: "#c75647",
   armor: "#7e87cc",
@@ -107,12 +112,20 @@ const stages = [
 
 let map = [];
 let player;
+let player2;
 let enemies = [];
 let bullets = [];
 let particles = [];
 let bonuses = [];
 let baseAlive = true;
 const baseRect = { x: 12 * TILE, y: 22 * TILE, w: 2 * TILE, h: 2 * TILE };
+const ai1 = window.TankPartnerAI?.createController("1P");
+const ai2 = window.TankPartnerAI?.createController("2P");
+let p1Idle = 0;
+let p1Auto = false;
+let p2Human = false;
+let baseDangerClock = 0;
+let hiddenTimer = null;
 
 function newAudio() {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -191,14 +204,15 @@ function solidTiles(box, tank = false) {
 function blocked(box, self) {
   if (box.x < 0 || box.y < 0 || box.x + box.w > canvas.width || box.y + box.h > canvas.height) return true;
   if (solidTiles(box, true).length) return true;
-  const tanks = [player, ...enemies].filter(Boolean).filter((t) => t !== self && t.alive);
+  const tanks = [player, player2, ...enemies].filter(Boolean).filter((t) => t !== self && t.alive);
   return tanks.some((tank) => rects(box, tank.box()));
 }
 
 function makeTank(kind, x, y) {
-  const enemy = kind !== "player";
+  const enemy = kind !== "player" && kind !== "player2";
   const stats = {
     player: { speed: 126, hp: 1, fireDelay: 0.55, color: colors.player },
+    player2: { speed: 122, hp: 1, fireDelay: 0.58, color: colors.player2 },
     basic: { speed: 72, hp: 1, fireDelay: 1.3, color: colors.enemy },
     fast: { speed: 105, hp: 1, fireDelay: 0.95, color: colors.fast },
     armor: { speed: 58, hp: 3, fireDelay: 1.55, color: colors.armor },
@@ -215,7 +229,7 @@ function makeTank(kind, x, y) {
     hp: stats.hp,
     color: stats.color,
     fireDelay: stats.fireDelay,
-    maxBullets: kind === "player" ? 1 : 1,
+    maxBullets: enemy ? 1 : 1,
     alive: true,
     cooldown: enemy ? Math.random() : 0,
     ai: 0,
@@ -236,7 +250,11 @@ function loadStage() {
   spawnClock = 0.2;
   freezeClock = 0;
   baseAlive = true;
+  p1Idle = 0;
+  p1Auto = false;
+  p2Human = false;
   player = makeTank("player", 8 * TILE + 2, 22 * TILE + 2);
+  player2 = makeTank("player2", 16 * TILE + 2, 22 * TILE + 2);
   updateUi();
 }
 
@@ -245,6 +263,8 @@ function updateUi() {
   ui.stage.textContent = String(stageIndex + 1).padStart(2, "0");
   ui.lives.textContent = String(lives).padStart(2, "0");
   ui.enemy.textContent = String(enemiesLeft + enemies.length).padStart(2, "0");
+  ui.p1mode.textContent = p1Auto ? "AI" : "人工";
+  ui.p2mode.textContent = p2Human ? "人工" : "AI";
 }
 
 function startGame() {
@@ -252,6 +272,7 @@ function startGame() {
   audio.resume();
   score = 0;
   lives = 3;
+  lives2 = 3;
   stageIndex = 0;
   state = "playing";
   overlay.classList.add("hidden");
@@ -323,6 +344,24 @@ function inputDir() {
   return null;
 }
 
+function p1InputActive() {
+  const pad = navigator.getGamepads?.()[gamepadIndex ?? 0];
+  const padMove = pad?.connected && (Math.abs(pad.axes[0] || 0) > 0.35 || Math.abs(pad.axes[1] || 0) > 0.35);
+  return padMove || padPressed(0) || padPressed(5) || ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyW", "KeyA", "KeyS", "KeyD", "Space"].some((key) => KEYS.has(key));
+}
+
+function p2InputDir() {
+  if (KEYS.has("KeyI")) return "up";
+  if (KEYS.has("KeyK")) return "down";
+  if (KEYS.has("KeyJ")) return "left";
+  if (KEYS.has("KeyL")) return "right";
+  return null;
+}
+
+function p2InputActive() {
+  return ["KeyI", "KeyK", "KeyJ", "KeyL", "KeyU"].some((key) => KEYS.has(key));
+}
+
 function padPressed(button) {
   return Boolean(padNow[button]);
 }
@@ -359,6 +398,11 @@ function hitRumble() {
   rumble(0.22, 0.12, 70);
 }
 
+function teachAis(event, amount = 1) {
+  ai1?.learn(event, amount);
+  ai2?.learn(event, amount);
+}
+
 function spawnEnemy(dt) {
   if (enemiesLeft <= 0 || enemies.length >= 4) return;
   spawnClock -= dt;
@@ -383,11 +427,17 @@ function spawnEnemy(dt) {
 function enemyAi(tank, dt) {
   tank.ai -= dt;
   const targetBase = { x: 12.5 * TILE, y: 21 * TILE };
+  const livingPlayers = [player, player2].filter((t) => t?.alive);
+  const targetPlayer = livingPlayers.sort((a, b) => {
+    const da = Math.abs(a.x - tank.x) + Math.abs(a.y - tank.y);
+    const db = Math.abs(b.x - tank.x) + Math.abs(b.y - tank.y);
+    return da - db;
+  })[0];
   if (tank.ai <= 0) {
     const chase = Math.random() > 0.32;
     if (chase) {
-      const dx = (player?.alive ? player.x : targetBase.x) - tank.x;
-      const dy = (player?.alive ? player.y : targetBase.y) - tank.y;
+      const dx = (targetPlayer?.alive ? targetPlayer.x : targetBase.x) - tank.x;
+      const dy = (targetPlayer?.alive ? targetPlayer.y : targetBase.y) - tank.y;
       tank.dir = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
     } else {
       tank.dir = ["up", "down", "left", "right"][Math.floor(Math.random() * 4)];
@@ -413,14 +463,26 @@ function hitTank(tank, bullet) {
   burst(tank.x + 14, tank.y + 14, tank.color, 28);
   if (tank.enemy) {
     score += tank.kind === "armor" ? 400 : tank.kind === "fast" ? 200 : 100;
+    teachAis("kill", 1);
     if (Math.random() > 0.84) bonuses.push({ x: tank.x, y: tank.y, w: 28, h: 28, type: Math.random() > 0.5 ? "star" : "freeze", ttl: 7 });
   } else {
-    lives--;
-    if (lives >= 0) {
-      player = makeTank("player", 8 * TILE + 2, 22 * TILE + 2);
-      player.invuln = 2.4;
+    teachAis(tank.kind === "player" ? "ally-hit" : "self-hit", -1);
+    if (tank.kind === "player") {
+      lives--;
+      if (lives >= 0) {
+        player = makeTank("player", 8 * TILE + 2, 22 * TILE + 2);
+        player.invuln = 2.4;
+      } else if (!player2?.alive) {
+        endGame(false);
+      }
     } else {
-      endGame(false);
+      lives2--;
+      if (lives2 >= 0) {
+        player2 = makeTank("player2", 16 * TILE + 2, 22 * TILE + 2);
+        player2.invuln = 2.4;
+      } else if (!player?.alive) {
+        endGame(false);
+      }
     }
   }
   return true;
@@ -434,6 +496,7 @@ function damageBase() {
   }
   burst(baseRect.x + baseRect.w / 2, baseRect.y + baseRect.h / 2, colors.gold, 56);
   sfx.boom();
+  teachAis("base-danger", -1);
   endGame(false);
 }
 
@@ -459,7 +522,7 @@ function updateBullets(dt) {
         burst(b.x, b.y, colors.bullet, 6);
       }
     }
-    const targets = b.enemy ? [player] : enemies;
+    const targets = b.enemy ? [player, player2] : enemies;
     for (const t of targets) {
       if (t?.alive && rects(box, t.box())) {
         b.dead = hitTank(t, b);
@@ -490,13 +553,14 @@ function updateParticles(dt) {
 function collectBonuses(dt) {
   for (const b of bonuses) {
     b.ttl -= dt;
-    if (player?.alive && rects(player.box(), b)) {
+    const collector = [player, player2].find((tank) => tank?.alive && rects(tank.box(), b));
+    if (collector) {
       b.dead = true;
       score += 500;
       if (b.type === "star") {
-        player.fireDelay = 0.32;
-        player.maxBullets = 2;
-        player.speed = 146;
+        collector.fireDelay = 0.32;
+        collector.maxBullets = 2;
+        collector.speed = 146;
       } else {
         freezeClock = 5;
       }
@@ -518,14 +582,48 @@ function nextStage() {
   sfx.start();
 }
 
+function aiContext(tank) {
+  return {
+    tank,
+    enemies,
+    friends: [player, player2].filter((t) => t?.alive && t !== tank),
+    bullets,
+    base: { ...baseRect },
+  };
+}
+
+function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled) {
+  if (!tank?.alive) return;
+  if (autoControlled && ai) {
+    const action = ai.decide(aiContext(tank), dt);
+    if (action.dir) moveTank(tank, action.dir, dt);
+    if (action.fire) fire(tank);
+  } else {
+    if (humanDir) moveTank(tank, humanDir, dt);
+    if (humanFire) fire(tank);
+  }
+  tank.cooldown = Math.max(0, tank.cooldown - dt);
+  tank.invuln = Math.max(0, tank.invuln - dt);
+}
+
 function update(dt) {
   if (state !== "playing") return;
-  const dir = inputDir();
-  if (dir) moveTank(player, dir, dt);
-  if (KEYS.has("Space") || KEYS.has("KeyJ") || padPressed(0) || padPressed(5)) fire(player);
-  player.cooldown = Math.max(0, player.cooldown - dt);
-  player.invuln = Math.max(0, player.invuln - dt);
+  if (p1InputActive()) {
+    p1Idle = 0;
+    p1Auto = false;
+  } else {
+    p1Idle += dt;
+    if (p1Idle >= P1_AUTO_SECONDS) p1Auto = true;
+  }
+  p2Human = p2InputActive();
+  updateAlly(player, dt, ai1, inputDir(), KEYS.has("Space") || padPressed(0) || padPressed(5), p1Auto);
+  updateAlly(player2, dt, ai2, p2InputDir(), KEYS.has("KeyU"), !p2Human);
   spawnEnemy(dt);
+  baseDangerClock -= dt;
+  if (baseDangerClock <= 0 && enemies.some((enemy) => Math.abs(enemy.x - baseRect.x) + Math.abs(enemy.y - baseRect.y) < 340)) {
+    teachAis("base-danger", 0.45);
+    baseDangerClock = 2;
+  }
   freezeClock = Math.max(0, freezeClock - dt);
   if (freezeClock <= 0) {
     for (const e of enemies) {
@@ -648,6 +746,7 @@ function draw() {
     ctx.fillRect(b.x + 6, b.y + 12, 16, 4);
   }
   drawTank(player);
+  drawTank(player2);
   enemies.forEach(drawTank);
   ctx.fillStyle = colors.bullet;
   bullets.forEach((b) => ctx.fillRect(Math.round(b.x), Math.round(b.y), b.w, b.h));
@@ -670,6 +769,10 @@ function draw() {
 function loop(time) {
   const dt = Math.min(0.033, (time - lastTime) / 1000 || 0);
   lastTime = time;
+  if (document.hidden) {
+    requestAnimationFrame(loop);
+    return;
+  }
   refreshPad();
   if ((state === "title" || state === "over") && (padJustPressed(9) || padJustPressed(0))) startGame();
   if (state === "playing" && padJustPressed(9)) state = "paused";
@@ -681,6 +784,26 @@ function loop(time) {
   requestAnimationFrame(loop);
 }
 
+function runHiddenStep() {
+  if (!document.hidden || state !== "playing") return;
+  refreshPad();
+  update(0.1);
+  padPrev = padNow.slice();
+}
+
+function syncBackgroundLoop() {
+  if (document.hidden) {
+    if (!hiddenTimer) hiddenTimer = setInterval(runHiddenStep, 100);
+  } else {
+    if (hiddenTimer) {
+      clearInterval(hiddenTimer);
+      hiddenTimer = null;
+    }
+    lastTime = performance.now();
+    draw();
+  }
+}
+
 function titleStartRequested(e) {
   return e.code === "Enter" || e.code === "NumpadEnter" || e.code === "Space";
 }
@@ -689,7 +812,7 @@ window.addEventListener("keydown", (e) => {
   if (!KEYS.has(e.code)) pressed.add(e.code);
   KEYS.add(e.code);
   if ((state === "title" || state === "over") && titleStartRequested(e)) {
-    overlay.innerHTML = '<h1>FC TANK BATTLE</h1><p>按 Enter / Xbox Start 开始</p><p class="small">方向键或左摇杆移动，Space / A 开火，P 暂停</p>';
+    overlay.innerHTML = '<h1>FC TANK BATTLE</h1><p>按 Enter / Xbox Start 开始</p><p class="small">1P 方向键/WASD + Space，2P IJKL + U；无人操作会由 AI 托管</p>';
     startGame();
   }
   if (e.code === "KeyP" && (state === "playing" || state === "paused")) state = state === "playing" ? "paused" : "playing";
@@ -705,6 +828,7 @@ window.addEventListener("gamepaddisconnected", () => {
   gamepadIndex = null;
   ui.pad.textContent = "键盘";
 });
+document.addEventListener("visibilitychange", syncBackgroundLoop);
 
 loadStage();
 draw();
