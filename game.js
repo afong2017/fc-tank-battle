@@ -1922,6 +1922,32 @@ function aiFirstHit(tank, dir = tank.dir) {
   return { type: "none" };
 }
 
+function shotFacesBaseGuard(tank, dir = tank.dir) {
+  const d = DIRS[dir];
+  if (!d) return false;
+  let x = tank.x + tank.w / 2;
+  let y = tank.y + tank.h / 2;
+  for (let i = 0; i < 46; i++) {
+    x += d.x * TILE * 0.38;
+    y += d.y * TILE * 0.38;
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return false;
+    const probe = { x: x - 4, y: y - 4, w: 8, h: 8 };
+    if (rects(probe, baseRect)) return true;
+    const tx = Math.floor(x / TILE);
+    const ty = Math.floor(y / TILE);
+    if (tileInBaseGuard(tx, ty)) return true;
+    const t = tileAt(tx, ty);
+    if (t === "S" || t === "W") return false;
+  }
+  return false;
+}
+
+function firstHitIsTargetEnemy(tank, dir, target) {
+  if (!target?.alive) return false;
+  const hit = aiFirstHit(tank, dir);
+  return hit.type === "enemy" && hit.target === target;
+}
+
 function predictedAllyBoxes(ally) {
   const box = ally.box();
   const d = DIRS[ally.dir] || { x: 0, y: 0 };
@@ -1991,6 +2017,9 @@ function aiShotSafe(tank, action = {}) {
   if (allyInShotCorridor(tank, tank.dir)) return false;
   const hit = aiFirstHit(tank, tank.dir);
   if (hit.type === "ally") return false;
+  if (shotFacesBaseGuard(tank, tank.dir)) {
+    return firstHitIsTargetEnemy(tank, tank.dir, action.target);
+  }
   if (action.target?.alive && (action.mode === "attack" || action.mode === "defend")) {
     return (hit.type === "enemy" && hit.target === action.target) || aiCanHitTarget(tank, tank.dir, action.target);
   }
@@ -2243,6 +2272,7 @@ function allyCanCrossSide(tank) {
 }
 
 function allyEligibleSideTarget(tank, enemy) {
+  if (freezeClock > 0.05) return visibleEnemyForAlly(enemy);
   return visibleEnemyForAlly(enemy) && (allyOwnSide(tank, enemy) || allyCanCrossSide(tank));
 }
 
@@ -2388,10 +2418,12 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
     moveTank(tank, tank.escapeDir, dt);
     tank.escapeTime = Math.max(0, tank.escapeTime - dt);
   } else if (autoControlled && ai) {
-    const context = aiContext(tank, reservedTargets, ai.memory?.weights || null);
+    const freezeAssault = freezeClock > 0.05;
+    const effectiveReservedTargets = reservedTargets;
+    const context = aiContext(tank, effectiveReservedTargets, ai.memory?.weights || null);
     action = ai.decide(context, dt);
     const actionTarget = action.target?.alive && allyEligibleSideTarget(tank, action.target) && !(enemies.length > 1 && targetReserved(action.target, reservedTargets)) ? action.target : null;
-    tank.attackTarget = tank.lockedBaseTarget || actionTarget || attackTargetFor(tank, reservedTargets);
+    tank.attackTarget = tank.lockedBaseTarget || actionTarget || attackTargetFor(tank, effectiveReservedTargets);
     const attackRouteAction = actionTarget?.alive && actionTarget.enemy && isAttackRouteMode(action.mode);
     tank.attackRoute = attackRouteAction ? (context.plannedRoute || null) : null;
     tank.attackRouteTarget = attackRouteAction ? actionTarget : null;
