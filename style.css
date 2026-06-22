@@ -41,8 +41,9 @@ body {
 
 .playfield {
   position: relative;
+  display: grid;
+  grid-template-rows: auto 54px 24px;
   width: 100%;
-  aspect-ratio: 13 / 12;
   background: #070707;
   image-rendering: pixelated;
   overflow: hidden;
@@ -51,25 +52,95 @@ body {
 canvas {
   display: block;
   width: 100%;
-  height: 100%;
+  aspect-ratio: 13 / 12;
   image-rendering: pixelated;
   background: #080808;
 }
 
 .overlay {
   position: absolute;
-  inset: 0;
+  inset: 0 0 78px 0;
   display: grid;
   align-content: center;
   justify-items: center;
   gap: 12px;
   padding: 24px;
   text-align: center;
-  background: rgba(0, 0, 0, 0.72);
+  background: rgba(0, 0, 0, 0.56);
 }
 
 .overlay.hidden {
   display: none;
+}
+
+.ai-bottom-panel {
+  display: grid;
+  grid-template-columns: 0.86fr 0.64fr 0.62fr 2.82fr 0.82fr;
+  gap: 5px;
+  min-height: 54px;
+  padding: 8px 10px;
+  border-top: 3px solid #2f3038;
+  background: #17171d;
+}
+
+.ai-bottom-panel div {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ai-bottom-panel span {
+  color: #aaa690;
+  font-size: 11px;
+}
+
+.ai-bottom-panel strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 17px;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#aiWeights {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  font-size: 13px;
+  text-overflow: clip;
+}
+
+.ai-bottom-panel .ai-param {
+  color: #66d26e;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.ai-version-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+  padding: 3px 10px 5px;
+  border-top: 2px solid #2f3038;
+  background: #14141a;
+  color: #aaa690;
+  font-size: 11px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ai-version-panel strong {
+  flex: 0 0 auto;
+  min-width: max-content;
+  color: var(--ink);
+  font-size: 13px;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 h1 {
@@ -92,16 +163,23 @@ p {
 
 .start-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(104px, 136px));
+  grid-template-columns: minmax(132px, 176px) repeat(2, minmax(92px, 136px));
   gap: 12px;
-  width: min(100%, 320px);
+  width: min(100%, 504px);
 }
 
 .start-options label {
   display: grid;
   gap: 6px;
+  padding: 4px;
+  border: 2px solid transparent;
   color: #aaa690;
   font-size: 12px;
+}
+
+.start-options label.active {
+  border-color: var(--gold);
+  color: var(--ink);
 }
 
 .start-options select {
@@ -114,6 +192,56 @@ p {
   font: inherit;
   font-size: 18px;
   text-align: center;
+}
+
+.start-options strong {
+  display: grid;
+  place-items: center;
+  min-height: 36px;
+  border: 2px solid #5e5e68;
+  background: #17171d;
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.stage-picker {
+  display: grid;
+  grid-template-columns: 32px 1fr 32px;
+  gap: 4px;
+}
+
+button {
+  border: 2px solid #5e5e68;
+  border-radius: 0;
+  background: #17171d;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover,
+button:focus-visible {
+  border-color: var(--gold);
+  outline: none;
+}
+
+.stage-picker button {
+  min-height: 36px;
+  font-size: 20px;
+}
+
+.start-button {
+  min-width: 144px;
+  min-height: 40px;
+  padding: 0 18px;
+  color: var(--gold);
+  font-size: 18px;
+}
+
+.start-button.active {
+  border-color: var(--gold);
+  background: #222028;
+  box-shadow: inset 0 0 0 1px rgba(217, 166, 66, 0.2);
 }
 
 .panel {
@@ -141,6 +269,34 @@ p {
   letter-spacing: 0;
 }
 
+#version {
+  font-size: 15px;
+  line-height: 1.1;
+}
+
+.enemy-bar {
+  display: grid;
+  grid-template-columns: repeat(20, 2px);
+  gap: 0.5px;
+  width: max-content;
+  max-width: 100%;
+  height: 11px;
+  margin-top: 2px;
+}
+
+.enemy-bar i {
+  display: block;
+  width: 2px;
+  border: 1px solid #554438;
+  background: #2d2b2b;
+}
+
+.enemy-bar i.active {
+  border-color: #c58a54;
+  background: #d35b37;
+  box-shadow: inset 0 -2px 0 #8b3427;
+}
+
 @media (max-width: 760px) {
   body {
     padding: 10px;
@@ -163,5 +319,46 @@ p {
 
   .panel strong {
     font-size: 16px;
+  }
+
+  #version {
+    font-size: 12px;
+  }
+
+  .enemy-bar {
+    grid-template-columns: repeat(20, 2px);
+    height: 9px;
+    gap: 0.5px;
+  }
+
+  .enemy-bar i {
+    width: 2px;
+  }
+
+  .ai-bottom-panel {
+    grid-template-columns: repeat(2, 1fr);
+    min-height: 96px;
+  }
+
+  .playfield {
+    grid-template-rows: auto 96px 24px;
+  }
+
+  .ai-bottom-panel strong {
+    font-size: 14px;
+  }
+
+  #aiWeights {
+    gap: 5px;
+    font-size: 13px;
+  }
+
+  .overlay {
+    inset: 0 0 120px 0;
+  }
+
+  .start-options {
+    grid-template-columns: 1fr;
+    width: min(100%, 180px);
   }
 }

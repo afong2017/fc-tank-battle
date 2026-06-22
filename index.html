@@ -12,28 +12,71 @@
         <canvas id="game" width="832" height="768" aria-label="FC tank battle canvas"></canvas>
         <div id="overlay" class="overlay">
           <h1 id="overlayTitle">FC TANK BATTLE</h1>
-          <p id="overlayPrompt">按 Enter / Xbox Start 开始</p>
+          <p id="overlayPrompt">STAGE 01  按 Back 选关，按 Start 开始</p>
           <div class="start-options">
+            <label id="stageOption" class="menu-option active">
+              <span>STAGE</span>
+              <div class="stage-picker">
+                <button id="stagePrev" type="button" aria-label="上一关">‹</button>
+                <strong id="stageSelectValue">01 / 35</strong>
+                <button id="stageNext" type="button" aria-label="下一关">›</button>
+              </div>
+            </label>
             <label>
               <span>1P LIFE</span>
               <select id="p1LivesStart">
-                <option value="3" selected>3</option>
-                <option value="5">5</option>
-                <option value="10">10</option>
-                <option value="Infinity">∞</option>
+                <option value="3">3</option>
+                <option value="Infinity" selected>∞</option>
               </select>
             </label>
             <label>
               <span>2P LIFE</span>
               <select id="p2LivesStart">
-                <option value="3" selected>3</option>
-                <option value="5">5</option>
-                <option value="10">10</option>
-                <option value="Infinity">∞</option>
+                <option value="3">3</option>
+                <option value="Infinity" selected>∞</option>
               </select>
             </label>
+            <label id="autoUpgradeOption" class="menu-option">
+              <span>AUTO LV</span>
+              <strong id="autoUpgradeValue">OFF</strong>
+            </label>
+            <label id="aiTrainOption" class="menu-option">
+              <span>AI TRAIN</span>
+              <strong id="aiTrainValue">ON</strong>
+            </label>
+            <label id="hotUpgradeOption" class="menu-option">
+              <span>HOT UP</span>
+              <strong id="hotUpgradeValue">ON</strong>
+            </label>
           </div>
+          <button id="startButton" class="start-button" type="button">START</button>
           <p id="overlayHelp" class="small">1P 方向键/WASD + Space，2P IJKL + U；无人操作会由 AI 托管</p>
+        </div>
+        <div class="ai-bottom-panel">
+          <div>
+            <span>TRAIN TIME</span>
+            <strong id="trainTime">00:00:00</strong>
+          </div>
+          <div>
+            <span>TRAIN GAMES</span>
+            <strong id="trainGames">0000</strong>
+          </div>
+          <div>
+            <span>AI EVO</span>
+            <strong id="aiEvolution">LV 0.00</strong>
+          </div>
+          <div>
+            <span>AI DATA</span>
+            <strong id="aiWeights">D0.00 A0.00</strong>
+          </div>
+          <div>
+            <span>UPGRADE</span>
+            <strong id="hotUpgradeStatus">READY</strong>
+          </div>
+        </div>
+        <div class="ai-version-panel">
+          <span>AI VERSION</span>
+          <strong id="aiVersionInfo">CODEX / GPT-5.5 / AI 2026-06-19 00:13:16 CST</strong>
         </div>
       </section>
       <aside class="panel">
@@ -42,16 +85,41 @@
           <strong id="score">000000</strong>
         </div>
         <div>
+          <span>2P</span>
+          <strong id="score2">000000</strong>
+        </div>
+        <div>
           <span>STAGE</span>
           <strong id="stage">01</strong>
+        </div>
+        <div>
+          <span>GAME VER</span>
+          <strong id="version">CODEX</strong>
+        </div>
+        <div>
+          <span>TIME</span>
+          <strong id="time">00:00</strong>
         </div>
         <div>
           <span>LIVES</span>
           <strong id="lives">03</strong>
         </div>
         <div>
+          <span>1P DEATH</span>
+          <strong id="p1Deaths">00</strong>
+        </div>
+        <div>
+          <span>2P DEATH</span>
+          <strong id="p2Deaths">00</strong>
+        </div>
+        <div>
           <span>ENEMY</span>
-          <strong id="enemy">20</strong>
+          <strong id="enemy">20/20</strong>
+          <div class="enemy-bar" id="enemyBar" aria-hidden="true"></div>
+        </div>
+        <div>
+          <span>KILL TOTAL</span>
+          <strong id="killsTotal">00</strong>
         </div>
         <div>
           <span>PAD</span>
@@ -69,5 +137,6 @@
     </main>
     <script src="ai.js"></script>
     <script src="game.js"></script>
+    <script src="hot-upgrade.js"></script>
   </body>
 </html>

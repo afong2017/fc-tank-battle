@@ -1,0 +1,8 @@
+node_modules/
+versions/
+output/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

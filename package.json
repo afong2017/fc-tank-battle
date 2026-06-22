@@ -1,0 +1,14 @@
+{
+  "name": "fc-tank-battle",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "start": "node dev-server.js",
+    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^5.5.0"
+  }
+}
