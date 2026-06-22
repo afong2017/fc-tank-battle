@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "updatedAt": "2026-06-22T03:32:30.555Z",
+  "updatedAt": "2026-06-22T03:36:02.995Z",
   "memory": {
     "weights": {
-      "defend": 3.7739999999999956,
-      "survive": 3.5199999999999814,
-      "attack": 3.4379999999999993,
-      "clear": 3.947500000000003
+      "defend": 4.226999999999992,
+      "survive": 4.015999999999965,
+      "attack": 3.8279999999999967,
+      "clear": 4.563999999999976
     },
     "bestWeights": {
       "defend": 3,
@@ -2710,2196 +2710,8 @@
   },
   "experience": {
     "version": 1,
-    "games": 471,
+    "games": 472,
     "events": [
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 16.5,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 266,
-          "y": 516,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 289,
-          "y": 575,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 266,
-          "y": 516,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee-dodge",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 16.5,
-        "type": "ally_death",
-        "enemy": {
-          "x": 246,
-          "y": 218,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 289,
-          "y": 575,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 266,
-          "y": 518,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": "down",
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee-dodge",
-        "reason": "dodge_failed",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 19.2,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 394,
-          "y": 577,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 418,
-          "y": 626,
-          "dir": "down",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 509,
-          "y": 131,
-          "dir": "left",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": null,
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": false,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 19.8,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 400,
-          "y": 609,
-          "dir": "right",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 397,
-          "y": 638,
-          "dir": "up",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 507,
-          "y": 193,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": 32,
-        "angle": "up",
-        "mode": null,
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 21.7,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 290,
-          "y": 496,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 242,
-          "y": 584,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 290,
-          "y": 496,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 22.5,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 290,
-          "y": 554,
-          "dir": "up",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 256,
-          "y": 563,
-          "dir": "right",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 290,
-          "y": 554,
-          "dir": "up",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": 42,
-        "angle": "right",
-        "mode": "close-melee-fire",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 23.8,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 293,
-          "y": 523,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 281,
-          "y": 578,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 293,
-          "y": 523,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": 2,
-        "bulletDir": null,
-        "distance": 67,
-        "angle": "up",
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 24.2,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 480,
-          "y": 436,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 432,
-          "y": 578,
-          "dir": "right",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 480,
-          "y": 436,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": 2,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 26,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 480,
-          "y": 436,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": {
-          "x": 490,
-          "y": 578,
-          "dir": "right",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 480,
-          "y": 436,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": 151,
-        "angle": "up",
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 35.3,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 133,
-          "y": 371,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 463,
-          "y": 643,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 133,
-          "y": 371,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": 2,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "base-anchor",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 35.4,
-        "type": "ally_death",
-        "enemy": {
-          "x": 534,
-          "y": 141,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 530,
-          "y": 578,
-          "dir": "left",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 534,
-          "y": 141,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": "down",
-        "distance": null,
-        "angle": null,
-        "mode": null,
-        "reason": "dodge_failed",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 37.9,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 189,
-          "y": 579,
-          "dir": "right",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 464,
-          "y": 643,
-          "dir": "right",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 189,
-          "y": 579,
-          "dir": "right",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "base-anchor",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 39.4,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 352,
-          "y": 578,
-          "dir": "up",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": {
-          "x": 386,
-          "y": 594,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 352,
-          "y": 578,
-          "dir": "up",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": 50,
-        "angle": "left",
-        "mode": "close-melee-duel",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 40.4,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 501,
-          "y": 463,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 421,
-          "y": 578,
-          "dir": "right",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 288,
-          "y": 267,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": null,
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": false,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 41.7,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 527,
-          "y": 534,
-          "dir": "right",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 513,
-          "y": 578,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 324,
-          "y": 326,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": 59,
-        "angle": "up",
-        "mode": null,
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 42.9,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 324,
-          "y": 410,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 417,
-          "y": 578,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 324,
-          "y": 410,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 45.4,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 254,
-          "y": 462,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 268,
-          "y": 578,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 254,
-          "y": 462,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": 2,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 45.4,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 253,
-          "y": 462,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 268,
-          "y": 578,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 253,
-          "y": 462,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": 2,
-        "bulletDir": null,
-        "distance": 132,
-        "angle": "up",
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 55.5,
-        "type": "ally_death",
-        "enemy": {
-          "x": 532,
-          "y": 357,
-          "dir": "right",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 501,
-          "y": 545,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 253,
-          "y": 221,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": "down",
-        "distance": null,
-        "angle": null,
-        "mode": null,
-        "reason": "dodge_failed",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 55.8,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 542,
-          "y": 370,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 481,
-          "y": 646,
-          "dir": "up",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 418,
-          "y": 271,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "base-anchor",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": false,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 57,
-        "type": "ally_death",
-        "enemy": {
-          "x": 542,
-          "y": 452,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 539,
-          "y": 646,
-          "dir": "right",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 542,
-          "y": 452,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": "down",
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee-dodge",
-        "reason": "dodge_failed",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 58.3,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 530,
-          "y": 488,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 531,
-          "y": 706,
-          "dir": "right",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 530,
-          "y": 488,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 59.4,
-        "type": "ally_stuck",
-        "enemy": null,
-        "tank": {
-          "x": 318,
-          "y": 648,
-          "dir": "right",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 382,
-          "y": 356,
-          "dir": "right",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "base-anchor",
-        "reason": "target_stale",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": 0.6
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 60.9,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 269,
-          "y": 453,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 284,
-          "y": 647,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 308,
-          "y": 356,
-          "dir": "right",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee-dodge",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": false,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 61.7,
-        "type": "ally_stuck",
-        "enemy": null,
-        "tank": {
-          "x": 488,
-          "y": 648,
-          "dir": "left",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 690,
-          "y": 368,
-          "dir": "right",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": "target_stale",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": 0.6
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 62,
-        "type": "ally_death",
-        "enemy": {
-          "x": 278,
-          "y": 567,
-          "dir": "right",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": {
-          "x": 253,
-          "y": 610,
-          "dir": "right",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 389,
-          "y": 356,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": "down",
-        "distance": null,
-        "angle": null,
-        "mode": null,
-        "reason": "dodge_failed",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962133070-370",
-        "stage": 1,
-        "time": 62.5,
-        "type": "base_hit",
-        "enemy": {
-          "x": 415,
-          "y": 662,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 488,
-          "y": 673,
-          "dir": "up",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 686,
-          "y": 368,
-          "dir": "left",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": true,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 3.7,
-        "type": "ally_stuck",
-        "enemy": null,
-        "tank": {
-          "x": 489,
-          "y": 680,
-          "dir": "right",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 712,
-          "y": 53,
-          "dir": "right",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "patch-base-lockdown",
-        "reason": "target_stale",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": 0.6
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 8.4,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 798,
-          "y": 371,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 488,
-          "y": 648,
-          "dir": "up",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 798,
-          "y": 371,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "kill-confirm",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 10.9,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 798,
-          "y": 521,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 505,
-          "y": 643,
-          "dir": "left",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 798,
-          "y": 521,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "base-anchor",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 13.5,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 798,
-          "y": 555,
-          "dir": "up",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 556,
-          "y": 643,
-          "dir": "left",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 798,
-          "y": 555,
-          "dir": "up",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "base-anchor",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 16,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 768,
-          "y": 504,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 530,
-          "y": 643,
-          "dir": "right",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 768,
-          "y": 504,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "base-anchor",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 18.5,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 228,
-          "y": 597,
-          "dir": "right",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 414,
-          "y": 606,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 228,
-          "y": 597,
-          "dir": "right",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee-dodge",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 19.7,
-        "type": "ally_death",
-        "enemy": {
-          "x": 579,
-          "y": 583,
-          "dir": "left",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": {
-          "x": 414,
-          "y": 568,
-          "dir": "down",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 254,
-          "y": 578,
-          "dir": "up",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": "left",
-        "distance": null,
-        "angle": null,
-        "mode": null,
-        "reason": "dodge_failed",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 20.4,
-        "type": "ally_death",
-        "enemy": {
-          "x": 548,
-          "y": 625,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": {
-          "x": 418,
-          "y": 599,
-          "dir": "up",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 548,
-          "y": 625,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": "left",
-        "distance": null,
-        "angle": null,
-        "mode": null,
-        "reason": "dodge_failed",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 21,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 385,
-          "y": 578,
-          "dir": "right",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 318,
-          "y": 655,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 385,
-          "y": 578,
-          "dir": "right",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 21.4,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 481,
-          "y": 663,
-          "dir": "left",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": {
-          "x": 488,
-          "y": 696,
-          "dir": "up",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 481,
-          "y": 663,
-          "dir": "left",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": 38,
-        "angle": "up",
-        "mode": "close-melee-fire",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 22.9,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 397,
-          "y": 634,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": {
-          "x": 293,
-          "y": 641,
-          "dir": "right",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 397,
-          "y": 634,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": 2,
-        "bulletDir": null,
-        "distance": 112,
-        "angle": "right",
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 23.5,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 481,
-          "y": 423,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 472,
-          "y": 675,
-          "dir": "right",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 481,
-          "y": 423,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee-dodge",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 25.9,
-        "type": "ally_stuck",
-        "enemy": null,
-        "tank": {
-          "x": 440,
-          "y": 641,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 98,
-          "y": 2,
-          "dir": "down",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": "target_stale",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": 0.6
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 26,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 481,
-          "y": 423,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 481,
-          "y": 655,
-          "dir": "down",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 481,
-          "y": 423,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 28.5,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 519,
-          "y": 459,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 491,
-          "y": 646,
-          "dir": "right",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 519,
-          "y": 459,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": 2,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 28.7,
-        "type": "ally_stuck",
-        "enemy": null,
-        "tank": {
-          "x": 442,
-          "y": 641,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 98,
-          "y": 76,
-          "dir": "down",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": "target_stale",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": 0.6
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 31,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 519,
-          "y": 551,
-          "dir": "up",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 532,
-          "y": 648,
-          "dir": "up",
-          "kind": "player2",
-          "mode": null
-        },
-        "target": {
-          "x": 519,
-          "y": 551,
-          "dir": "up",
-          "kind": "basic",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 31.9,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 514,
-          "y": 560,
-          "dir": "up",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 386,
-          "y": 571,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 76,
-          "y": 247,
-          "dir": "left",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": 140,
-        "angle": "right",
-        "mode": null,
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 33.5,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 238,
-          "y": 435,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 386,
-          "y": 645,
-          "dir": "down",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 58,
-          "y": 320,
-          "dir": "down",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": 2,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "base-anchor",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": false,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 36,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 211,
-          "y": 471,
-          "dir": "left",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 421,
-          "y": 617,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 112,
-          "y": 392,
-          "dir": "left",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "base-anchor",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": false,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 38.5,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 275,
-          "y": 565,
-          "dir": "right",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 417,
-          "y": 611,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 96,
-          "y": 517,
-          "dir": "down",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": false,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 39.7,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 352,
-          "y": 567,
-          "dir": "down",
-          "kind": "basic",
-          "mode": null
-        },
-        "tank": {
-          "x": 417,
-          "y": 552,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 102,
-          "y": 580,
-          "dir": "right",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": 2,
-        "bulletDir": null,
-        "distance": 80,
-        "angle": "left",
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 41,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 150,
-          "y": 608,
-          "dir": "right",
-          "kind": "armor",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 405,
-          "y": 610,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 150,
-          "y": 608,
-          "dir": "right",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee-dodge",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 41.8,
-        "type": "ally_stuck",
-        "enemy": null,
-        "tank": {
-          "x": 391,
-          "y": 610,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 197,
-          "y": 608,
-          "dir": "right",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee-dodge",
-        "reason": "target_stale",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": 0.6
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 42,
-        "type": "ally_stuck",
-        "enemy": null,
-        "tank": {
-          "x": 392,
-          "y": 639,
-          "dir": "left",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 517,
-          "y": 557,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee-dodge",
-        "reason": "target_stale",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": 0.6
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 43.4,
-        "type": "ally_stuck",
-        "enemy": null,
-        "tank": {
-          "x": 388,
-          "y": 536,
-          "dir": "left",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 252,
-          "y": 641,
-          "dir": "right",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": "target_stale",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": 0.6
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 43.5,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 398,
-          "y": 581,
-          "dir": "down",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 400,
-          "y": 536,
-          "dir": "right",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 262,
-          "y": 641,
-          "dir": "right",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": null,
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": false,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 44.7,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 435,
-          "y": 644,
-          "dir": "left",
-          "kind": "fast",
-          "mode": null
-        },
-        "tank": {
-          "x": 483,
-          "y": 659,
-          "dir": "left",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 435,
-          "y": 644,
-          "dir": "left",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": 63,
-        "angle": "left",
-        "mode": "close-melee-fire",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 46.1,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 277,
-          "y": 641,
-          "dir": "left",
-          "kind": "armor",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 419,
-          "y": 597,
-          "dir": "down",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 277,
-          "y": 641,
-          "dir": "left",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": 2,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 48.6,
-        "type": "enemy_cross_midline",
-        "enemy": {
-          "x": 260,
-          "y": 615,
-          "dir": "down",
-          "kind": "armor",
-          "mode": null
-        },
-        "tank": null,
-        "ally": {
-          "x": 272,
-          "y": 643,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "target": {
-          "x": 260,
-          "y": 615,
-          "dir": "down",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee-duel",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": true,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 49.2,
-        "type": "enemy_killed",
-        "enemy": {
-          "x": 243,
-          "y": 615,
-          "dir": "right",
-          "kind": "armor",
-          "mode": null
-        },
-        "tank": {
-          "x": 251,
-          "y": 643,
-          "dir": "up",
-          "kind": "player",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 243,
-          "y": 615,
-          "dir": "right",
-          "kind": "armor",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": 36,
-        "angle": "up",
-        "mode": "close-melee-fire",
-        "reason": null,
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": null
-      },
-      {
-        "matchId": "1781962197658-371",
-        "stage": 1,
-        "time": 50.5,
-        "type": "ally_stuck",
-        "enemy": null,
-        "tank": {
-          "x": 287,
-          "y": 653,
-          "dir": "down",
-          "kind": "player2",
-          "mode": null
-        },
-        "ally": null,
-        "target": {
-          "x": 716,
-          "y": 588,
-          "dir": "left",
-          "kind": "fast",
-          "mode": null
-        },
-        "routeLength": null,
-        "bulletDir": null,
-        "distance": null,
-        "angle": null,
-        "mode": "close-melee",
-        "reason": "target_stale",
-        "clear": false,
-        "misread": false,
-        "timelyReturn": null,
-        "staleSeconds": 0.6
-      },
       {
         "matchId": "1781962197658-371",
         "stage": 1,
@@ -90995,62 +88807,2230 @@
         "misread": false,
         "timelyReturn": null,
         "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 5.9,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 513,
+          "y": 371,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 588,
+          "y": 615,
+          "dir": "down",
+          "kind": "player2",
+          "mode": null
+        },
+        "target": {
+          "x": 513,
+          "y": 371,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": 4,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "base-anchor",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 8.4,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 513,
+          "y": 521,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 549,
+          "y": 594,
+          "dir": "down",
+          "kind": "player2",
+          "mode": null
+        },
+        "target": {
+          "x": 513,
+          "y": 521,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee-clear",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 10.9,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 476,
+          "y": 553,
+          "dir": "up",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 551,
+          "y": 584,
+          "dir": "left",
+          "kind": "player2",
+          "mode": null
+        },
+        "target": {
+          "x": 476,
+          "y": 553,
+          "dir": "up",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 11.8,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 551,
+          "y": 585,
+          "dir": "down",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 476,
+          "y": 518,
+          "dir": "up",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 12.1,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 476,
+          "y": 518,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": {
+          "x": 387,
+          "y": 535,
+          "dir": "right",
+          "kind": "player",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 58,
+          "y": 209,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": 105,
+        "angle": "right",
+        "mode": null,
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 13.4,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 673,
+          "y": 509,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 553,
+          "y": 641,
+          "dir": "right",
+          "kind": "player2",
+          "mode": null
+        },
+        "target": {
+          "x": 673,
+          "y": 509,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 14.6,
+        "type": "ally_death",
+        "enemy": null,
+        "tank": {
+          "x": 609,
+          "y": 570,
+          "dir": "up",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 673,
+          "y": 542,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": "right",
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee-dodge",
+        "reason": "friendly_fire",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 15.9,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 642,
+          "y": 603,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 547,
+          "y": 641,
+          "dir": "up",
+          "kind": "player2",
+          "mode": null
+        },
+        "target": {
+          "x": 642,
+          "y": 603,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 16.4,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 619,
+          "y": 593,
+          "dir": "up",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": {
+          "x": 556,
+          "y": 610,
+          "dir": "right",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 619,
+          "y": 593,
+          "dir": "up",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": 79,
+        "angle": "right",
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 18.2,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 553,
+          "y": 584,
+          "dir": "right",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 674,
+          "y": 165,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "freeze-assault",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 18.4,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 0,
+          "y": 481,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 386,
+          "y": 515,
+          "dir": "up",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 0,
+          "y": 481,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "freeze-assault",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 20.2,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 553,
+          "y": 584,
+          "dir": "right",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 674,
+          "y": 165,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "freeze-assault",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 20.9,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 0,
+          "y": 481,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 290,
+          "y": 482,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 0,
+          "y": 481,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "freeze-assault",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 22.1,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 551,
+          "y": 585,
+          "dir": "down",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 692,
+          "y": 171,
+          "dir": "right",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "base-anchor",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 23,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 292,
+          "y": 482,
+          "dir": "right",
+          "kind": "player",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 0,
+          "y": 572,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "base-anchor-clear",
+        "reason": "route_clear_failed",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 23.4,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 10,
+          "y": 596,
+          "dir": "right",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 292,
+          "y": 531,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 10,
+          "y": 596,
+          "dir": "right",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "base-anchor-clear",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 24.2,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 551,
+          "y": 585,
+          "dir": "down",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 718,
+          "y": 263,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "base-anchor",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 25.9,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 140,
+          "y": 645,
+          "dir": "right",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 263,
+          "y": 573,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 140,
+          "y": 645,
+          "dir": "right",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee-dodge",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 26.7,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 551,
+          "y": 584,
+          "dir": "up",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 688,
+          "y": 380,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "base-anchor",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 28.4,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 236,
+          "y": 645,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 263,
+          "y": 550,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 236,
+          "y": 645,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": 2,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 30,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 258,
+          "y": 645,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": {
+          "x": 269,
+          "y": 575,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 258,
+          "y": 645,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": 2,
+        "bulletDir": null,
+        "distance": 80,
+        "angle": "down",
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 31,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 709,
+          "y": 557,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 610,
+          "y": 550,
+          "dir": "right",
+          "kind": "player2",
+          "mode": null
+        },
+        "target": {
+          "x": 709,
+          "y": 557,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 33.5,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 196,
+          "y": 534,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 410,
+          "y": 577,
+          "dir": "left",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 196,
+          "y": 534,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "base-anchor",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 36,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 235,
+          "y": 614,
+          "dir": "right",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 283,
+          "y": 545,
+          "dir": "left",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 235,
+          "y": 614,
+          "dir": "right",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": 2,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 36.5,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 247,
+          "y": 625,
+          "dir": "left",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": {
+          "x": 264,
+          "y": 545,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 247,
+          "y": 625,
+          "dir": "left",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": 2,
+        "bulletDir": null,
+        "distance": 96,
+        "angle": "down",
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 38.5,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 549,
+          "y": 605,
+          "dir": "up",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 453,
+          "y": 641,
+          "dir": "right",
+          "kind": "player2",
+          "mode": null
+        },
+        "target": {
+          "x": 549,
+          "y": 605,
+          "dir": "up",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": 4,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 39.6,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 468,
+          "y": 545,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 128,
+          "y": 420,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 39.8,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 549,
+          "y": 629,
+          "dir": "up",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": {
+          "x": 509,
+          "y": 641,
+          "dir": "right",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 549,
+          "y": 629,
+          "dir": "up",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": 52,
+        "angle": "right",
+        "mode": "close-melee-fire",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 41,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 128,
+          "y": 505,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 459,
+          "y": 514,
+          "dir": "up",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 128,
+          "y": 505,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "base-anchor",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 43.5,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 186,
+          "y": 592,
+          "dir": "right",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 425,
+          "y": 514,
+          "dir": "right",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 186,
+          "y": 592,
+          "dir": "right",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "base-anchor",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 45.1,
+        "type": "ally_death",
+        "enemy": {
+          "x": 349,
+          "y": 510,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": {
+          "x": 355,
+          "y": 545,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 261,
+          "y": 609,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": "down",
+        "distance": null,
+        "angle": null,
+        "mode": null,
+        "reason": "dodge_failed",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 46,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 249,
+          "y": 609,
+          "dir": "left",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": {
+          "x": 258,
+          "y": 675,
+          "dir": "up",
+          "kind": "player",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 249,
+          "y": 609,
+          "dir": "left",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": 75,
+        "angle": "up",
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 46,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 360,
+          "y": 571,
+          "dir": "right",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": {
+          "x": 376,
+          "y": 641,
+          "dir": "up",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 457,
+          "y": 104,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": 2,
+        "bulletDir": null,
+        "distance": 87,
+        "angle": "up",
+        "mode": "base-anchor",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 51.4,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 495,
+          "y": 213,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": {
+          "x": 502,
+          "y": 514,
+          "dir": "up",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 495,
+          "y": 213,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": 308,
+        "angle": "up",
+        "mode": "freeze-assault",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 52.4,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 491,
+          "y": 98,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": {
+          "x": 519,
+          "y": 514,
+          "dir": "left",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 491,
+          "y": 98,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": 444,
+        "angle": "up",
+        "mode": "freeze-assault",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 57.3,
+        "type": "ally_death",
+        "enemy": {
+          "x": 543,
+          "y": 100,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": {
+          "x": 518,
+          "y": 545,
+          "dir": "right",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 543,
+          "y": 100,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": "down",
+        "distance": null,
+        "angle": null,
+        "mode": null,
+        "reason": "dodge_failed",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 59.4,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 2,
+          "y": 370,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 269,
+          "y": 578,
+          "dir": "right",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 302,
+          "y": 127,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": null,
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": false,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 62,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 225,
+          "y": 598,
+          "dir": "right",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 225,
+          "y": 643,
+          "dir": "left",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 225,
+          "y": 598,
+          "dir": "right",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee-fire",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 62.7,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 214,
+          "y": 604,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": {
+          "x": 416,
+          "y": 578,
+          "dir": "up",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 578,
+          "y": 229,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": 227,
+        "angle": "left",
+        "mode": null,
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 64.5,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 29,
+          "y": 542,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 230,
+          "y": 584,
+          "dir": "left",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 29,
+          "y": 542,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": 3,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 67,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 29,
+          "y": 542,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 260,
+          "y": 568,
+          "dir": "up",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 29,
+          "y": 542,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee-fire",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 68.6,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 290,
+          "y": 549,
+          "dir": "down",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 519,
+          "y": 237,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 69.5,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 29,
+          "y": 512,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 290,
+          "y": 484,
+          "dir": "left",
+          "kind": "player2",
+          "mode": null
+        },
+        "target": {
+          "x": 519,
+          "y": 297,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": null,
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": false,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 72,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 495,
+          "y": 454,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 388,
+          "y": 547,
+          "dir": "right",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 29,
+          "y": 561,
+          "dir": "down",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": null,
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": false,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 74.5,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 160,
+          "y": 577,
+          "dir": "right",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 351,
+          "y": 519,
+          "dir": "left",
+          "kind": "player2",
+          "mode": null
+        },
+        "target": {
+          "x": 787,
+          "y": 555,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": null,
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": false,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 76,
+        "type": "ally_death",
+        "enemy": {
+          "x": 247,
+          "y": 577,
+          "dir": "right",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": {
+          "x": 322,
+          "y": 566,
+          "dir": "down",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 638,
+          "y": 302,
+          "dir": "down",
+          "kind": "basic",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": "right",
+        "distance": null,
+        "angle": null,
+        "mode": null,
+        "reason": "dodge_failed",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 77,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 249,
+          "y": 627,
+          "dir": "up",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 316,
+          "y": 573,
+          "dir": "left",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 249,
+          "y": 627,
+          "dir": "up",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 79.5,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 249,
+          "y": 609,
+          "dir": "up",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 272,
+          "y": 573,
+          "dir": "left",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 249,
+          "y": 609,
+          "dir": "up",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": 2,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 81.2,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 540,
+          "y": 577,
+          "dir": "left",
+          "kind": "basic",
+          "mode": null
+        },
+        "tank": {
+          "x": 552,
+          "y": 639,
+          "dir": "up",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 482,
+          "y": 457,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": 75,
+        "angle": "up",
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 82,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 259,
+          "y": 616,
+          "dir": "right",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 258,
+          "y": 502,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 259,
+          "y": 616,
+          "dir": "right",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": 2,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 82.8,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 551,
+          "y": 583,
+          "dir": "left",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 482,
+          "y": 541,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 83,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 482,
+          "y": 541,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": {
+          "x": 258,
+          "y": 545,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 259,
+          "y": 616,
+          "dir": "right",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": 228,
+        "angle": "right",
+        "mode": "close-melee-fire",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 83.1,
+        "type": "enemy_killed",
+        "enemy": {
+          "x": 259,
+          "y": 616,
+          "dir": "right",
+          "kind": "armor",
+          "mode": null
+        },
+        "tank": {
+          "x": 258,
+          "y": 554,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 259,
+          "y": 616,
+          "dir": "right",
+          "kind": "armor",
+          "mode": null
+        },
+        "routeLength": 2,
+        "bulletDir": null,
+        "distance": 62,
+        "angle": "down",
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 84.8,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 551,
+          "y": 585,
+          "dir": "down",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 706,
+          "y": 2,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "near-freeze",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 86.7,
+        "type": "ally_stuck",
+        "enemy": null,
+        "tank": {
+          "x": 551,
+          "y": 583,
+          "dir": "up",
+          "kind": "player2",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 706,
+          "y": 2,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "near-freeze",
+        "reason": "target_stale",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": 0.6
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 89,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 70,
+          "y": 371,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 258,
+          "y": 512,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 205,
+          "y": 37,
+          "dir": "left",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": null,
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": false,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 91.5,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 131,
+          "y": 460,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 290,
+          "y": 517,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 289,
+          "y": 196,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": false,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 92.7,
+        "type": "ally_death",
+        "enemy": {
+          "x": 289,
+          "y": 327,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": {
+          "x": 290,
+          "y": 512,
+          "dir": "up",
+          "kind": "player",
+          "mode": null
+        },
+        "ally": null,
+        "target": {
+          "x": 289,
+          "y": 327,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": "down",
+        "distance": null,
+        "angle": null,
+        "mode": null,
+        "reason": "dodge_failed",
+        "clear": false,
+        "misread": false,
+        "timelyReturn": null,
+        "staleSeconds": null
+      },
+      {
+        "matchId": "1782099266835-472",
+        "stage": 1,
+        "time": 94,
+        "type": "enemy_cross_midline",
+        "enemy": {
+          "x": 289,
+          "y": 459,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "tank": null,
+        "ally": {
+          "x": 258,
+          "y": 671,
+          "dir": "down",
+          "kind": "player",
+          "mode": null
+        },
+        "target": {
+          "x": 289,
+          "y": 459,
+          "dir": "down",
+          "kind": "fast",
+          "mode": null
+        },
+        "routeLength": null,
+        "bulletDir": null,
+        "distance": null,
+        "angle": null,
+        "mode": "close-melee",
+        "reason": null,
+        "clear": false,
+        "misread": false,
+        "timelyReturn": true,
+        "staleSeconds": null
       }
     ],
     "counters": {
-      "ally_death": 1141,
-      "friendly_fire": 148,
-      "ally_stuck": 2853,
-      "target_stale": 2643,
-      "enemy_cross_midline": 5982,
-      "enemy_killed": 2036,
-      "dodge_failed": 993,
+      "ally_death": 1146,
+      "friendly_fire": 149,
+      "ally_stuck": 2865,
+      "target_stale": 2654,
+      "enemy_cross_midline": 6011,
+      "enemy_killed": 2049,
+      "dodge_failed": 997,
       "base_hit": 441,
-      "route_clear_failed": 210,
+      "route_clear_failed": 211,
       "mode:kill-confirm": 426,
       "mode:attack": 4,
       "mode:kill-confirm-fire": 12,
       "mode:patch-base-lockdown": 148,
       "mode:kill-confirm-clear": 5,
-      "mode:base-anchor": 1940,
+      "mode:base-anchor": 1948,
       "mode:base-anchor-fire": 123,
-      "mode:base-anchor-clear": 89,
-      "mode:close-melee": 1673,
-      "mode:close-melee-dodge": 368,
-      "mode:close-melee-fire": 221,
+      "mode:base-anchor-clear": 91,
+      "mode:close-melee": 1696,
+      "mode:close-melee-dodge": 370,
+      "mode:close-melee-fire": 225,
       "mode:close-melee-duel": 41,
-      "mode:close-melee-clear": 51,
+      "mode:close-melee-clear": 52,
       "mode:urgent-freeze": 6,
       "mode:forward-intercept": 156,
-      "mode:near-freeze": 3,
-      "mode:freeze-assault": 32,
+      "mode:near-freeze": 5,
+      "mode:freeze-assault": 38,
       "mode:freeze-assault-fire": 6,
       "mode:forward-intercept-fire": 5,
       "mode:patch-base-lockdown-clear": 1
     },
     "currentMatch": {
-      "id": "1782099092661-471",
+      "id": "1782099266835-472",
       "stage": 1,
-      "startedAt": 1782099092661,
-      "events": 31,
+      "startedAt": 1782099266835,
+      "events": 59,
       "counters": {
-        "ally_stuck": 9,
-        "target_stale": 9,
-        "mode:forward-intercept": 1,
-        "enemy_cross_midline": 14,
-        "mode:base-anchor": 4,
-        "mode:close-melee": 12,
+        "enemy_cross_midline": 29,
+        "mode:base-anchor": 8,
         "mode:close-melee-clear": 1,
-        "mode:close-melee-dodge": 1,
-        "enemy_killed": 4,
-        "ally_death": 4,
+        "mode:close-melee": 23,
+        "ally_stuck": 12,
+        "target_stale": 11,
+        "enemy_killed": 13,
+        "ally_death": 5,
+        "friendly_fire": 1,
+        "mode:close-melee-dodge": 2,
+        "mode:freeze-assault": 6,
+        "route_clear_failed": 1,
+        "mode:base-anchor-clear": 2,
+        "mode:close-melee-fire": 4,
         "dodge_failed": 4,
-        "mode:close-melee-fire": 1
+        "mode:near-freeze": 2
       }
     }
   },
   "training": {
-    "seconds": 20540.601466686367,
+    "seconds": 20636.34866668591,
     "games": 447
   }
 }

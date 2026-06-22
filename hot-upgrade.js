@@ -96,22 +96,16 @@
   }
 
   function applyGameUpgrade(next) {
-    if (window.FCGameHotAPI?.canApplyGameUpgrade?.() === false) {
-      state.pendingGame = next;
-      renderVersion(next);
-      setStatus("GAME WAIT");
-      window.FCGameHotAPI?.setPendingGameUpgrade?.(true);
-      return;
-    }
+    state.pendingGame = next;
     renderVersion(next);
-    setStatus("GAME FILE");
+    setStatus(window.FCGameHotAPI?.canApplyGameUpgrade?.() === false ? "GAME WAIT" : "GAME NEW");
+    window.FCGameHotAPI?.setPendingGameUpgrade?.(true);
     sessionStorage.setItem("fc-tank-battle.hot-upgrade", JSON.stringify({
       at: Date.now(),
       game: next.game?.version || next.game?.hash,
       ai: next.ai?.version || next.ai?.hash,
+      pending: true,
     }));
-    const baseUrl = location.href.split(/[?#]/)[0];
-    location.replace(`${baseUrl}?hot=${encodeURIComponent(next.game?.version || next.game?.hash || Date.now())}`);
   }
 
   async function checkNow() {
@@ -131,14 +125,8 @@
       }
       renderVersion(next);
       if (state.pendingGame) {
-        if (window.FCGameHotAPI?.canApplyGameUpgrade?.() !== false) {
-          const pending = state.pendingGame;
-          state.pendingGame = null;
-          window.FCGameHotAPI?.setPendingGameUpgrade?.(false);
-          applyGameUpgrade(pending);
-          return;
-        }
-        setStatus("GAME WAIT");
+        renderVersion(state.pendingGame);
+        setStatus(window.FCGameHotAPI?.canApplyGameUpgrade?.() === false ? "GAME WAIT" : "GAME NEW");
         return;
       }
       if (!sameVersion(state.version, next, "game")) {
@@ -195,7 +183,8 @@
     checkNow,
     applyPendingGameUpgrade() {
       if (!state.pendingGame) return false;
-      applyGameUpgrade(state.pendingGame);
+      renderVersion(state.pendingGame);
+      setStatus("GAME NEW");
       return true;
     },
     setEnabled(value) {

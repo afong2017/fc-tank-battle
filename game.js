@@ -2170,7 +2170,6 @@ function endGame(win) {
   ui.overlayHelp.textContent = `1P ${String(score).padStart(6, "0")}  2P ${String(score2).padStart(6, "0")}`;
   if (pendingGameUpgrade) {
     window.FCHotUpgrade?.checkNow?.();
-    return;
   }
   scheduleTrainingAutoStart(1800);
 }
