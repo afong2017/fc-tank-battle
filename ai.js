@@ -1242,6 +1242,12 @@
     return moveIntoEnemyBulletRisk(tank, dir, bullets) >= threshold;
   }
 
+  function routeBulletThreshold(mode) {
+    if (mode === "bonus") return 18;
+    if (mode === "intercept" || mode === "defend") return 14;
+    return 9;
+  }
+
   function threatLine(enemy, target, tolerance = 24) {
     const dx = centerX(target) - centerX(enemy);
     const dy = centerY(target) - centerY(enemy);
@@ -1426,6 +1432,7 @@
       if (!upperHalf) score += 900 + (attackWeight - 1) * 160;
       if (centerY(enemy) > midline && personalDistance < TILE * 9) score += 1500;
       if (centerY(enemy) > centerY(ctx.base) - TILE * 9 && Math.abs(centerX(enemy) - centerX(ctx.base)) < TILE * 10) score += 2600;
+      if (centerY(enemy) > midline - TILE * 2.5 && Math.abs(centerX(enemy) - centerX(ctx.base)) < TILE * 11) score += 1800 + baseScore * 18;
       if (ctx.enemies.length < 3) score += Math.max(0, TILE * 10 - personalDistance) * 0.6;
       if (ctx.canShoot?.(tank.dir, enemy)) score += 12 + attackWeight * 2.5;
       if (threatLine(enemy, tank)) score += 7 + defendWeight * 1.2;
@@ -1820,12 +1827,19 @@
 
   function midlineBreachThreat(ctx) {
     const midline = (ctx.rows || 24) * TILE * 0.5;
+    const baseX = centerX(ctx.base);
     return ctx.enemies
-      .filter((enemy) => visibleEnemy(ctx, enemy) && centerY(enemy) >= midline)
+      .filter((enemy) => {
+        if (!visibleEnemy(ctx, enemy)) return false;
+        const y = centerY(enemy);
+        const x = centerX(enemy);
+        const preBreach = y >= midline - TILE * 2.2 && Math.abs(x - baseX) < TILE * 11;
+        return y >= midline || preBreach || baseThreatScore(ctx, enemy) > 18;
+      })
       .sort((a, b) => {
-        const aBase = dist(a, ctx.base);
-        const bBase = dist(b, ctx.base);
-        if (Math.abs(aBase - bBase) > TILE * 2) return aBase - bBase;
+        const aScore = baseThreatScore(ctx, a) * 18 + Math.max(0, centerY(a) - (midline - TILE * 2)) - dist(a, ctx.base) * 0.35;
+        const bScore = baseThreatScore(ctx, b) * 18 + Math.max(0, centerY(b) - (midline - TILE * 2)) - dist(b, ctx.base) * 0.35;
+        if (Math.abs(aScore - bScore) > 8) return bScore - aScore;
         return centerY(b) - centerY(a);
       })[0] || null;
   }
@@ -2507,17 +2521,18 @@
     const avoidStaleRoute = hasDirective(ctx, "AVOID_STALE_ROUTE");
       const learnedUnstuck = (ctx.adaptive?.stuckPressure || 0) > 0.45 || (ctx.adaptive?.stalePressure || 0) > 0.45 || (ctx.adaptive?.clearAggression || 0) > 0.72;
     const allowBrickClear = mode === "attack" || mode === "intercept" || mode === "defend" || hasPatch(ctx, "unstuck_clear") || learnedUnstuck;
+    const bulletThreshold = routeBulletThreshold(mode);
     const aStarRoute = findAStarRoute(ctx, tank, goals, allowBrickClear);
     if (aStarRoute?.dir) {
       const align = alignmentDir(ctx, tank, aStarRoute.dir, aStarRoute.cells[0]);
-      if (align && canMove(ctx, align) && !isMoveIntoEnemyBullet(tank, align, ctx.bullets || [], mode === "bonus" ? 18 : 9)) {
+      if (align && canMove(ctx, align) && !isMoveIntoEnemyBullet(tank, align, ctx.bullets || [], bulletThreshold)) {
         ctx.routeFollowing = true;
         ctx.plannedRoute = routePointsFromCells(tank, aStarRoute.cells);
         return align;
       }
       ctx.routeNeedsClear = aStarRoute.needsClear && clearableBrickAhead(ctx, tank, aStarRoute.dir);
       ctx.routeFollowing = true;
-      if ((ctx.routeNeedsClear || canMove(ctx, aStarRoute.dir)) && !isMoveIntoEnemyBullet(tank, aStarRoute.dir, ctx.bullets || [], mode === "bonus" ? 18 : 9)) {
+      if ((ctx.routeNeedsClear || canMove(ctx, aStarRoute.dir)) && !isMoveIntoEnemyBullet(tank, aStarRoute.dir, ctx.bullets || [], bulletThreshold)) {
         ctx.plannedRoute = routePointsFromCells(tank, aStarRoute.cells);
         return aStarRoute.dir;
       }
@@ -2527,13 +2542,13 @@
     const path = routeStep(ctx, tank, distMap, allowBrickClear);
     if (path.step) {
       const align = alignmentDir(ctx, tank, path.step.dir, path.here);
-      if (align && canMove(ctx, align) && !isMoveIntoEnemyBullet(tank, align, ctx.bullets || [], mode === "bonus" ? 18 : 9)) {
+      if (align && canMove(ctx, align) && !isMoveIntoEnemyBullet(tank, align, ctx.bullets || [], bulletThreshold)) {
         ctx.plannedRoute = routePoints(ctx, tank, distMap, align);
         return align;
       }
       ctx.routeNeedsClear = path.step.needsClear && clearableBrickAhead(ctx, tank, path.step.dir);
       ctx.routeFollowing = true;
-      if ((ctx.routeNeedsClear || canMove(ctx, path.step.dir)) && !isMoveIntoEnemyBullet(tank, path.step.dir, ctx.bullets || [], mode === "bonus" ? 18 : 9)) {
+      if ((ctx.routeNeedsClear || canMove(ctx, path.step.dir)) && !isMoveIntoEnemyBullet(tank, path.step.dir, ctx.bullets || [], bulletThreshold)) {
         ctx.plannedRoute = routePoints(ctx, tank, distMap, path.step.dir);
         return path.step.dir;
       }
@@ -3015,10 +3030,11 @@
     function commit(ctx, action, dt = 0) {
       directionLock = Math.max(0, directionLock - dt);
       targetLock = Math.max(0, targetLock - dt);
-      if (action.dir && !action.fire && action.mode !== "dodge" && isMoveIntoEnemyBullet(ctx.tank, action.dir, ctx.bullets || [], 9)) {
+      const actionBulletThreshold = /midline|intercept|defend|base-anchor|base-assault/.test(action.mode || "") ? 14 : 9;
+      if (action.dir && !action.fire && action.mode !== "dodge" && isMoveIntoEnemyBullet(ctx.tank, action.dir, ctx.bullets || [], actionBulletThreshold)) {
         const bullet = incomingBullet(ctx.tank, ctx.bullets || []);
         const escape = bullet ? dodgeDir(ctx, ctx.tank, bullet) : null;
-        action = escape && !isMoveIntoEnemyBullet(ctx.tank, escape, ctx.bullets || [], 9)
+        action = escape && !isMoveIntoEnemyBullet(ctx.tank, escape, ctx.bullets || [], actionBulletThreshold)
           ? { ...action, dir: escape, hold: false, mode: `${action.mode || "move"}-avoid-bullet` }
           : { ...action, dir: null, hold: true, mode: `${action.mode || "move"}-hold-bullet` };
       }
