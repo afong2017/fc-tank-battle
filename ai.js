@@ -1666,8 +1666,11 @@
   function routeInterceptGoals(ctx, tank, enemy, name) {
     const route = enemyBaseRoute(ctx, enemy);
     if (!route.cells.length) return [];
+    if (dist(tank, enemy) < TILE * 7.5) return [];
     const enemyCell = route.cells[0];
     const baseCell = cellOf(ctx.base, ctx.cols, ctx.rows);
+    const directRoute = routeDistanceToTarget(ctx, tank, enemy);
+    const targetDir = directionTo(tank, enemy);
     const candidates = [];
     const maxIndex = Math.min(route.cells.length - 1, 18);
     for (let i = 2; i <= maxIndex; i++) {
@@ -1686,13 +1689,17 @@
       .map((item) => {
         const box = { x: item.cell.x * TILE + 2, y: item.cell.y * TILE + 2, w: 28, h: 28 };
         const allyRoute = routeDistanceToPoint(ctx, tank, box, false);
+        if (Number.isFinite(directRoute) && Number.isFinite(allyRoute) && allyRoute > directRoute + 5) return null;
         const meetGap = Number.isFinite(allyRoute) ? Math.abs(allyRoute - item.index) : 99;
         const lineShot = item.cell.x === enemyCell.x || item.cell.y === enemyCell.y ? -5 : 0;
         const sideBias = ownSide(ctx, box, name) ? -3 : 3;
-        const score = (Number.isFinite(allyRoute) ? allyRoute : 120) * 2.4 + meetGap * 1.6 + item.index * 0.45 + sideBias + lineShot + bulletRisk(box, ctx.bullets || [], true) * 8;
+        const firstDir = directionTo(tank, box);
+        const awayPenalty = targetDir && firstDir === OPPOSITE[targetDir] ? 28 : 0;
+        const lateInterceptPenalty = Number.isFinite(allyRoute) && allyRoute > item.index + 3 ? 18 : 0;
+        const score = (Number.isFinite(allyRoute) ? allyRoute : 120) * 2.4 + meetGap * 1.6 + item.index * 0.45 + sideBias + lineShot + awayPenalty + lateInterceptPenalty + bulletRisk(box, ctx.bullets || [], true) * 8;
         return { box, score };
       })
-      .filter((item) => Number.isFinite(item.score))
+      .filter((item) => item && Number.isFinite(item.score))
       .sort((a, b) => a.score - b.score)
       .slice(0, 20)
       .map((item) => item.box);
