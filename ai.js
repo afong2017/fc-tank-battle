@@ -2400,6 +2400,27 @@
       .map((c) => ({ x: c.x * TILE + 2, y: c.y * TILE + 2, w: 28, h: 28 }));
   }
 
+  function directChaseGoals(ctx, target) {
+    if (!target) return [];
+    const cell = cellOf(target, ctx.cols, ctx.rows);
+    const cells = [
+      { x: cell.x, y: cell.y },
+      { x: cell.x, y: cell.y - 1 },
+      { x: cell.x, y: cell.y + 1 },
+      { x: cell.x - 1, y: cell.y },
+      { x: cell.x + 1, y: cell.y },
+      { x: cell.x, y: cell.y - 2 },
+      { x: cell.x, y: cell.y + 2 },
+      { x: cell.x - 2, y: cell.y },
+      { x: cell.x + 2, y: cell.y },
+    ];
+    return cells
+      .filter((c, i, list) => c && list.findIndex((other) => other.x === c.x && other.y === c.y) === i)
+      .filter((c) => walkable(ctx, c.x, c.y))
+      .sort((a, b) => cellDist(a, cell) - cellDist(b, cell))
+      .map((c) => ({ x: c.x * TILE + 2, y: c.y * TILE + 2, w: 28, h: 28 }));
+  }
+
   function firingProfile(ctx, goalCell, targetCell) {
     if (goalCell.x !== targetCell.x && goalCell.y !== targetCell.y) {
       return { viable: false, rank: 9 };
@@ -3482,11 +3503,7 @@
           return commit(ctx, { dir: shot, fire: true, hold: true, mode: "base-nearest-hunt-fire", target: baseNearestTarget }, dt);
         }
         ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
-        const goals = [
-          ...approachGoals(ctx, baseNearestTarget),
-          ...shootingPositionGoals(ctx, tank, baseNearestTarget, name),
-          ...attackGoals(ctx, baseNearestTarget),
-        ];
+        const goals = directChaseGoals(ctx, baseNearestTarget);
         const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, "attack") || directionTo(tank, baseNearestTarget);
         lastMode = "base-nearest-hunt";
         if (ctx.routeNeedsClear && ctx.canFire?.()) {
