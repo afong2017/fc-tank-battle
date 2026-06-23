@@ -3330,6 +3330,7 @@
       targetLock = Math.max(0, targetLock - dt);
       const actionBulletThreshold = /freeze-assault/.test(action.mode || "")
         ? 18
+        : action.mode === "near-freeze" || action.mode === "urgent-freeze" ? 16
         : /midline|intercept|defend|base-anchor|base-assault/.test(action.mode || "") ? 14 : 9;
       if (action.dir && !action.fire && action.mode !== "dodge" && isMoveIntoEnemyBullet(ctx.tank, action.dir, ctx.bullets || [], actionBulletThreshold)) {
         const bullet = incomingBullet(ctx.tank, ctx.bullets || []);
@@ -3443,10 +3444,15 @@
         Math.round((ctx.base?.y || 0) / 32),
         (ctx.enemies || []).filter((enemy) => enemy?.alive && dist(enemy, ctx.base) < TILE * 10).length,
         (ctx.bullets || []).filter((bullet) => bullet?.enemy && dist(bullet, ctx.tank) < TILE * 6).length,
+        (ctx.bonuses || []).filter((bonus) => bonus.type === "freeze" && !bonus.dead && bonus.ttl > 0 && dist(ctx.tank, bonus) <= TILE * 5.8).length,
         ctx.mapVersion || 0,
       ].join("|");
       thinkCooldown = Math.max(0, thinkCooldown - dt);
-      if (lastAction && thinkCooldown > 0 && urgentKey === lastUrgencyKey) {
+      const immediateFreeze = nearFreezeBonus(ctx, ctx.tank);
+      if (immediateFreeze) {
+        thinkCooldown = 0;
+        lastAction = null;
+      } else if (lastAction && thinkCooldown > 0 && urgentKey === lastUrgencyKey) {
         return lastAction;
       }
       lastUrgencyKey = urgentKey;
@@ -3476,7 +3482,7 @@
       const guard = guardGoals(ctx, name);
       const guardRange = dist(tank, ctx.base);
       const visibleBasePressure = scan.threats.some((item) => (item.rawScore ?? item.score) > 9);
-      const closeFreeze = nearFreezeBonus(ctx, tank);
+      const closeFreeze = immediateFreeze || nearFreezeBonus(ctx, tank);
       const urgentFreeze = urgentFreezeBonus(ctx, tank);
       const bonus = !scan.emergency && !visibleBasePressure ? nearbyBonus(ctx, tank) : null;
       const baseNearestTarget = baseApproachTarget(ctx);
