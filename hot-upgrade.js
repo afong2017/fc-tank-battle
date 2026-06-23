@@ -22,6 +22,7 @@
     checking: false,
     pendingGame: null,
   };
+  const VERSION_TIMEOUT_MS = 2500;
 
   function withVersion(file, version) {
     const mark = encodeURIComponent(version || Date.now());
@@ -73,9 +74,15 @@
 
   async function readVersion() {
     if (!isServerMode()) return { ...DEFAULT_VERSION, offline: true };
-    const response = await fetch(withVersion("/version", Date.now()), { cache: "no-store" });
-    if (!response.ok) throw new Error(`version ${response.status}`);
-    return { ...DEFAULT_VERSION, ...(await response.json()) };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), VERSION_TIMEOUT_MS);
+    try {
+      const response = await fetch(withVersion("/version", Date.now()), { cache: "no-store", signal: controller.signal });
+      if (!response.ok) throw new Error(`version ${response.status}`);
+      return { ...DEFAULT_VERSION, ...(await response.json()) };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   function sameVersion(a, b, key) {
@@ -89,7 +96,7 @@
     state.version = {
       ...state.version,
       ai: next.ai,
-      game: next.game || state.version?.game,
+      game: state.version?.game || DEFAULT_VERSION.game,
     };
     renderVersion(state.version);
     setStatus("AI UP");
@@ -125,8 +132,14 @@
       }
       renderVersion(next);
       if (state.pendingGame) {
+        if (sameVersion(state.pendingGame, next, "game") && sameVersion(state.version, next, "game")) {
+          state.pendingGame = null;
+          window.FCGameHotAPI?.setPendingGameUpgrade?.(false);
+        } else if (!sameVersion(state.version, next, "ai")) {
+          await applyAiUpgrade(next);
+        }
         renderVersion(state.pendingGame);
-        setStatus(window.FCGameHotAPI?.canApplyGameUpgrade?.() === false ? "GAME WAIT" : "GAME NEW");
+        setStatus(state.pendingGame ? (window.FCGameHotAPI?.canApplyGameUpgrade?.() === false ? "GAME WAIT" : "GAME NEW") : "READY");
         return;
       }
       if (!sameVersion(state.version, next, "game")) {
@@ -185,6 +198,7 @@
       if (!state.pendingGame) return false;
       renderVersion(state.pendingGame);
       setStatus("GAME NEW");
+      window.FCGameHotAPI?.setPendingGameUpgrade?.(true);
       return true;
     },
     setEnabled(value) {
