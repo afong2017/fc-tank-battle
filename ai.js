@@ -1667,7 +1667,7 @@
       bulletRisk: currentBulletRisk,
       baseShot: baseDangerClose(ctx, baseTarget) ? safeShotDir(ctx, tank, baseTarget) : shotDir(ctx, tank, baseTarget),
       enemyShot: shotDir(ctx, tank, enemyTarget),
-      closeCombatShot: shotDir(ctx, tank, closeCombatTarget),
+      closeCombatShot: sideLaneShotTooEarly(ctx, tank, closeCombatTarget) ? null : shotDir(ctx, tank, closeCombatTarget),
       baseLineClear: attackLineClearDir(ctx, tank, baseTarget, true),
       enemyLineClear: attackLineClearDir(ctx, tank, enemyTarget, false),
       closeCombatLineClear: attackLineClearDir(ctx, tank, closeCombatTarget, false),
@@ -2867,6 +2867,34 @@
     return shot;
   }
 
+  function sideLaneShotTooEarly(ctx, tank, target, dir = null) {
+    if (!target?.alive) return false;
+    if (dist(tank, target) > TILE * 5.5) return false;
+    const dx = Math.abs(centerX(tank) - centerX(target));
+    const dy = Math.abs(centerY(tank) - centerY(target));
+    const closeSideLane = dx > 18 && dx < TILE * 3.2 && dy > 8 && dy < TILE * 1.45;
+    const closeVerticalLane = dy > 18 && dy < TILE * 3.2 && dx > 8 && dx < TILE * 1.45;
+    if (dir === "left" || dir === "right") return closeSideLane && !certainHit(ctx, tank, dir, target);
+    if (dir === "up" || dir === "down") return closeVerticalLane && !certainHit(ctx, tank, dir, target);
+    return closeSideLane || closeVerticalLane;
+  }
+
+  function sideLaneAlignAction(ctx, tank, target) {
+    if (!target?.alive || dist(tank, target) > TILE * 5.5) return null;
+    const dx = Math.abs(centerX(tank) - centerX(target));
+    const dy = Math.abs(centerY(tank) - centerY(target));
+    const safeMove = (dir) => dir && canMove(ctx, dir) && !isMoveIntoEnemyBullet(tank, dir, ctx.bullets || [], 9);
+    if (dx > 18 && dx < TILE * 3.2 && dy > 8 && dy < TILE * 1.45) {
+      const dir = centerY(target) < centerY(tank) ? "up" : "down";
+      if (safeMove(dir)) return { dir, fire: false, hold: false, mode: "close-melee-align", target };
+    }
+    if (dy > 18 && dy < TILE * 3.2 && dx > 8 && dx < TILE * 1.45) {
+      const dir = centerX(target) < centerX(tank) ? "left" : "right";
+      if (safeMove(dir)) return { dir, fire: false, hold: false, mode: "close-melee-align", target };
+    }
+    return null;
+  }
+
   function closeCombatAction(ctx, tank, target, name) {
     if (!target?.alive) return null;
     const distance = dist(tank, target);
@@ -2897,8 +2925,11 @@
       if (dir) return { dir, fire: false, hold: false, mode: "close-melee-dodge", target };
     }
 
+    const align = sideLaneAlignAction(ctx, tank, target);
+    if (align) return align;
+
     const shot = shotDir(ctx, tank, target);
-    if (shot && ctx.canFire?.() && risk < 6.6) {
+    if (shot && !sideLaneShotTooEarly(ctx, tank, target, shot) && ctx.canFire?.() && risk < 6.6) {
       return { dir: shot, fire: true, hold: true, mode: "close-melee-fire", target };
     }
 
