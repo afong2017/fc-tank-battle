@@ -2760,7 +2760,7 @@
     const surviveWeight = styleWeight(ctx, "survive");
     const avoidStaleRoute = hasDirective(ctx, "AVOID_STALE_ROUTE");
     const learnedUnstuck = (ctx.adaptive?.stuckPressure || 0) > 0.45 || (ctx.adaptive?.stalePressure || 0) > 0.45 || (ctx.adaptive?.clearAggression || 0) > 0.72;
-    const allowBrickClear = !ctx.disableBrickClear && (chaseStalled || mode === "attack" || mode === "intercept" || mode === "defend" || hasPatch(ctx, "unstuck_clear") || learnedUnstuck);
+    const allowBrickClear = !ctx.disableBrickClear && (mode === "attack" || (!ctx.chaseBrickClearOnly && (chaseStalled || mode === "intercept" || mode === "defend" || hasPatch(ctx, "unstuck_clear") || learnedUnstuck)));
     const bulletThreshold = routeBulletThreshold(mode);
     const aStarRoute = findAStarRoute(ctx, tank, goals, allowBrickClear);
     if (aStarRoute?.dir) {
@@ -3412,7 +3412,8 @@
       ctx.adaptive = adaptiveProfile(memory);
       ctx.tacticalMemory = memory.tacticalMemory || normalizeTacticalMemory();
       ctx.review = normalizeReview(memory.review);
-      ctx.disableBrickClear = true;
+      ctx.disableBrickClear = false;
+      ctx.chaseBrickClearOnly = true;
       ctx.aggressiveOnly = true;
       const urgentKey = [
         Math.round((ctx.tank?.x || 0) / 16),
@@ -3488,6 +3489,10 @@
         ];
         const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, "attack") || directionTo(tank, baseNearestTarget);
         lastMode = "base-nearest-hunt";
+        if (ctx.routeNeedsClear && ctx.canFire?.()) {
+          lastMode = "base-nearest-hunt-clear";
+          return commit(ctx, { dir, fire: true, hold: true, mode: "base-nearest-hunt-clear", target: baseNearestTarget }, dt);
+        }
         return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
       }
       if (closeFreeze && scan.bulletRisk < 7.5) {
