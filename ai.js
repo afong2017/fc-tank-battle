@@ -1533,6 +1533,16 @@
     return best;
   }
 
+  function nearestBaseEnemy(ctx) {
+    return (ctx.enemies || [])
+      .filter((enemy) => visibleEnemy(ctx, enemy))
+      .sort((a, b) => {
+        const baseDelta = dist(a, ctx.base) - dist(b, ctx.base);
+        if (Math.abs(baseDelta) > TILE * 0.5) return baseDelta;
+        return centerY(b) - centerY(a);
+      })[0] || null;
+  }
+
   function immediateEnemy(ctx, tank, name) {
     return ctx.enemies
       .filter((enemy) => {
@@ -1658,7 +1668,7 @@
     const sideUrgent = urgent && eligibleSideTarget(ctx, urgent, name) ? urgent : null;
     const baseTarget = forced || sideUrgent || (eligibleThreat && (eligibleThreat.rawScore ?? eligibleThreat.score) > emergencyThreshold ? eligibleThreat.enemy : null);
     const closeCombatTarget = forced ? null : immediateEnemy(ctx, tank, name);
-    const enemyTarget = forced || bestEnemy(ctx, tank, name);
+    const enemyTarget = forced || nearestBaseEnemy(ctx) || bestEnemy(ctx, tank, name);
     const radioBullet = incomingAllyRadio(tank, ctx.allyFireReports || []);
     const bullet = incomingBullet(tank, ctx.bullets || []) || incomingFriendlyBullet(tank, ctx.bullets || []) || radioBullet;
     const currentBulletRisk = bulletRisk(tank, ctx.bullets || [], true) + allyRadioRisk(tank, ctx.allyFireReports || []);
@@ -3210,7 +3220,7 @@
         directionLock = 0;
         const closeCombatTarget = action.target && dist(ctx.tank, action.target) < TILE * 3.8;
         const priorityTarget = action.target && (closeCombatTarget || dist(ctx.tank, action.target) < TILE * 6.5 || baseThreatScore(ctx, action.target) > 14);
-        targetLock = action.mode?.startsWith("base-intruder") || action.mode?.startsWith("spawn-defense") || action.mode?.startsWith("spawn-assault") || action.mode?.startsWith("target-execute") || action.mode?.startsWith("chase-break") || /^(defend|defend-clear|base-assault|base-assault-clear)$/.test(action.mode || "")
+        targetLock = action.mode?.startsWith("base-intruder") || action.mode?.startsWith("spawn-defense") || action.mode?.startsWith("spawn-assault") || action.mode?.startsWith("target-execute") || action.mode?.startsWith("chase-break") || action.mode?.startsWith("base-nearest-hunt") || /^(defend|defend-clear|base-assault|base-assault-clear)$/.test(action.mode || "")
           ? 2.1
           : closeCombatTarget ? 1.8 : priorityTarget ? 1.45 : /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear)$/.test(action.mode || "") ? 1.25 : 0.35;
       }
@@ -3226,7 +3236,7 @@
       if (action.target) {
         if (action.target === lastTarget) {
           targetAge += dt;
-          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "freeze-assault-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear" || action.mode === "spawn-assault-clear" || action.mode === "target-execute-clear" || action.mode === "chase-break-clear") ? 0 : targetWorkAge + dt;
+          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "freeze-assault-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear" || action.mode === "spawn-assault-clear" || action.mode === "target-execute-clear" || action.mode === "chase-break-clear" || action.mode === "base-nearest-hunt-clear") ? 0 : targetWorkAge + dt;
           const nowDistance = dist(ctx.tank, action.target);
           const makingProgress = nowDistance < lastTargetDistance - TILE * 0.18 || action.fire || action.mode?.includes("clear");
           targetNoProgressAge = makingProgress ? 0 : targetNoProgressAge + dt;
@@ -3237,7 +3247,7 @@
           targetNoProgressAge = 0;
           lastTargetDistance = dist(ctx.tank, action.target);
         }
-        if (!targetChanged && /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear|spawn-assault|spawn-assault-fire|spawn-assault-clear|target-execute|target-execute-fire|target-execute-clear|chase-break|chase-break-fire|chase-break-clear)$/.test(action.mode || "")) {
+        if (!targetChanged && /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear|spawn-assault|spawn-assault-fire|spawn-assault-clear|target-execute|target-execute-fire|target-execute-clear|chase-break|chase-break-fire|chase-break-clear|base-nearest-hunt|base-nearest-hunt-fire|base-nearest-hunt-clear)$/.test(action.mode || "")) {
           targetLock = Math.max(targetLock, baseThreatScore(ctx, action.target) > 16 ? 1.05 : 0.65);
         }
         lastTarget = action.target;
@@ -3343,6 +3353,7 @@
       const closeFreeze = nearFreezeBonus(ctx, tank);
       const urgentFreeze = urgentFreezeBonus(ctx, tank);
       const bonus = !scan.emergency && !visibleBasePressure ? nearbyBonus(ctx, tank) : null;
+      const baseNearestTarget = nearestBaseEnemy(ctx);
       const intruder = baseIntruder(ctx, name);
       const anchorThreat = baseAnchorThreat(ctx);
       const laneThreat = baseFireLaneThreat(ctx);
@@ -3454,6 +3465,33 @@
           return commit(ctx, { dir, fire: true, hold: true, mode: "chase-break-clear", target: chaseTarget }, dt);
         }
         return commit(ctx, { dir, fire: false, hold: false, mode: "chase-break", target: chaseTarget }, dt);
+      }
+
+      if (baseNearestTarget) {
+        const shot = safeShotDir(ctx, tank, baseNearestTarget) || shotDir(ctx, tank, baseNearestTarget);
+        if (shot && ctx.canFire?.() && scan.bulletRisk < 8.8) {
+          lastMode = "base-nearest-hunt-fire";
+          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "base-nearest-hunt-fire", target: baseNearestTarget }, dt);
+        }
+        const lineClear = attackLineClearDir(ctx, tank, baseNearestTarget, true) || tacticalClearDir(ctx, tank, baseNearestTarget);
+        if (lineClear && ctx.canFire?.()) {
+          lastMode = "base-nearest-hunt-clear";
+          return commit(ctx, { dir: lineClear, fire: true, hold: true, mode: "base-nearest-hunt-clear", target: baseNearestTarget }, dt);
+        }
+        ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
+        const goals = [
+          ...approachGoals(ctx, baseNearestTarget),
+          ...shootingPositionGoals(ctx, tank, baseNearestTarget, name),
+          ...attackGoals(ctx, baseNearestTarget),
+          ...interceptGoals(ctx, baseNearestTarget, name).slice(0, 12),
+        ];
+        const dir = routeDir(ctx, tank, goals, baseNearestTarget, "attack");
+        lastMode = "base-nearest-hunt";
+        if (ctx.routeNeedsClear && ctx.canFire?.()) {
+          lastMode = "base-nearest-hunt-clear";
+          return commit(ctx, { dir, fire: true, hold: true, mode: "base-nearest-hunt-clear", target: baseNearestTarget }, dt);
+        }
+        return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
       }
 
       if (midlineThreat && (ctx.adaptive.frontGuardBias > 0.35 || ctx.adaptive.midlineTriggerOffset > 1.2)) {
