@@ -3127,7 +3127,7 @@
         const priorityTarget = action.target && (closeCombatTarget || dist(ctx.tank, action.target) < TILE * 6.5 || baseThreatScore(ctx, action.target) > 14);
         targetLock = action.mode?.startsWith("base-intruder") || action.mode?.startsWith("spawn-defense") || /^(defend|defend-clear|base-assault|base-assault-clear)$/.test(action.mode || "")
           ? 2.1
-          : closeCombatTarget ? 1.8 : priorityTarget ? 1.45 : /^(long-range-fire|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear)$/.test(action.mode || "") ? 1.25 : 0.35;
+          : closeCombatTarget ? 1.8 : priorityTarget ? 1.45 : /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear)$/.test(action.mode || "") ? 1.25 : 0.35;
       }
       if (action.dir && !action.hold) {
         const reversing = lastMoveDir && action.dir === OPPOSITE[lastMoveDir];
@@ -3141,12 +3141,12 @@
       if (action.target) {
         if (action.target === lastTarget) {
           targetAge += dt;
-          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear") ? 0 : targetWorkAge + dt;
+          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "freeze-assault-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear") ? 0 : targetWorkAge + dt;
         } else {
           targetAge = 0;
           targetWorkAge = 0;
         }
-        if (!targetChanged && /^(long-range-fire|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear)$/.test(action.mode || "")) {
+        if (!targetChanged && /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear)$/.test(action.mode || "")) {
           targetLock = Math.max(targetLock, baseThreatScore(ctx, action.target) > 16 ? 1.05 : 0.65);
         }
         lastTarget = action.target;
@@ -3223,6 +3223,29 @@
         lastMode = "near-freeze";
         return commit(ctx, { dir, fire: false, hold: false, mode: "near-freeze" }, dt);
       }
+
+      const freezeTarget = freezeAssaultTarget(ctx, tank, name);
+      if (freezeTarget) {
+        const shot = safeShotDir(ctx, tank, freezeTarget) || shotDir(ctx, tank, freezeTarget);
+        if (shot && ctx.canFire?.() && scan.bulletRisk < 10.5) {
+          lastMode = "freeze-assault-fire";
+          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "freeze-assault-fire", target: freezeTarget }, dt);
+        }
+        const lineClear = attackLineClearDir(ctx, tank, freezeTarget, true);
+        if (lineClear && ctx.canFire?.()) {
+          lastMode = "freeze-assault-clear";
+          return commit(ctx, { dir: lineClear, fire: true, hold: true, mode: "freeze-assault-clear", target: freezeTarget }, dt);
+        }
+        const goals = [...shootingPositionGoals(ctx, tank, freezeTarget, name), ...attackGoals(ctx, freezeTarget), ...approachGoals(ctx, freezeTarget), ...interceptGoals(ctx, freezeTarget, name)];
+        const dir = routeDir(ctx, tank, goals, freezeTarget, "attack");
+        lastMode = "freeze-assault";
+        if (ctx.routeNeedsClear && ctx.canFire?.()) {
+          lastMode = "freeze-assault-clear";
+          return commit(ctx, { dir, fire: true, hold: true, mode: "freeze-assault-clear", target: freezeTarget }, dt);
+        }
+        return commit(ctx, { dir, fire: false, hold: false, mode: "freeze-assault", target: freezeTarget }, dt);
+      }
+
       if (midlineThreat && (ctx.adaptive.frontGuardBias > 0.35 || ctx.adaptive.midlineTriggerOffset > 1.2)) {
         const shot = safeShotDir(ctx, tank, midlineThreat) || shotDir(ctx, tank, midlineThreat);
         if (shot && ctx.canFire?.() && scan.bulletRisk < 7.8) {
@@ -3243,28 +3266,6 @@
       if (meleeAction) {
         lastMode = meleeAction.mode;
         return commit(ctx, meleeAction, dt);
-      }
-
-      const freezeTarget = freezeAssaultTarget(ctx, tank, name);
-      if (freezeTarget) {
-        const shot = shotDir(ctx, tank, freezeTarget) || safeShotDir(ctx, tank, freezeTarget);
-        if (shot && ctx.canFire?.() && scan.bulletRisk < 8.5) {
-          lastMode = "freeze-assault-fire";
-          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "freeze-assault-fire", target: freezeTarget }, dt);
-        }
-        const lineClear = attackLineClearDir(ctx, tank, freezeTarget, true);
-        if (lineClear && ctx.canFire?.()) {
-          lastMode = "freeze-assault-clear";
-          return commit(ctx, { dir: lineClear, fire: true, hold: true, mode: "freeze-assault-clear", target: freezeTarget }, dt);
-        }
-        const goals = [...shootingPositionGoals(ctx, tank, freezeTarget, name), ...attackGoals(ctx, freezeTarget), ...approachGoals(ctx, freezeTarget)];
-        const dir = routeDir(ctx, tank, goals, freezeTarget, "attack");
-        lastMode = "freeze-assault";
-        if (ctx.routeNeedsClear && ctx.canFire?.()) {
-          lastMode = "freeze-assault-clear";
-          return commit(ctx, { dir, fire: true, hold: true, mode: "freeze-assault-clear", target: freezeTarget }, dt);
-        }
-        return commit(ctx, { dir, fire: false, hold: false, mode: "freeze-assault", target: freezeTarget }, dt);
       }
 
       if (urgentFreeze) {
