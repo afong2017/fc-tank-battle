@@ -1538,8 +1538,8 @@
       .filter((enemy) => visibleEnemy(ctx, enemy))
       .map((enemy) => {
         const baseDistance = dist(enemy, ctx.base);
-        const routeToBase = routeDistanceToPoint(ctx, enemy, ctx.base, false);
-        const routeScore = Number.isFinite(routeToBase) ? routeToBase * TILE : baseDistance + TILE * 10;
+        const approachRoute = enemyBaseRoute(ctx, enemy);
+        const routeScore = Number.isFinite(approachRoute.distance) ? approachRoute.distance * TILE : baseDistance + TILE * 10;
         const lane = Math.abs(centerX(enemy) - centerX(ctx.base));
         let eta = Math.min(baseDistance, routeScore);
         if (enemy.dir === "down" && centerY(enemy) < centerY(ctx.base)) eta -= TILE * 5;
@@ -1606,6 +1606,96 @@
     const distMap = buildWeightedDistance(ctx, [target], allowBrickClear);
     const here = cellOf(tank, ctx.cols, ctx.rows);
     return distMap[key(here.x, here.y, ctx.cols)];
+  }
+
+  function baseApproachCells(ctx) {
+    const baseCell = cellOf(ctx.base, ctx.cols, ctx.rows);
+    const cells = [];
+    for (let y = baseCell.y - 4; y <= baseCell.y + 1; y++) {
+      for (let x = baseCell.x - 4; x <= baseCell.x + 5; x++) {
+        const dx = Math.abs(x - baseCell.x);
+        const dy = Math.abs(y - baseCell.y);
+        if (dy > 4 || dx > 5) continue;
+        if (baseBlocked(ctx, x, y)) continue;
+        if (walkable(ctx, x, y)) cells.push({ x, y });
+      }
+    }
+    return cells.length ? cells : [
+      { x: baseCell.x - 3, y: baseCell.y - 4 },
+      { x: baseCell.x + 3, y: baseCell.y - 4 },
+      { x: baseCell.x, y: baseCell.y - 5 },
+    ].filter((cell) => walkable(ctx, cell.x, cell.y));
+  }
+
+  function enemyBaseRoute(ctx, enemy) {
+    if (!enemy?.alive) return { cells: [], distance: Infinity };
+    const goals = baseApproachCells(ctx).map((cell) => ({ x: cell.x * TILE + 2, y: cell.y * TILE + 2, w: 28, h: 28 }));
+    if (!goals.length) return { cells: [], distance: Infinity };
+    const distMap = buildWeightedDistance(ctx, goals, false);
+    const start = cellOf(enemy, ctx.cols, ctx.rows);
+    const startCost = distMap[key(start.x, start.y, ctx.cols)];
+    if (!Number.isFinite(startCost)) return { cells: [], distance: Infinity };
+    const cells = [start];
+    const seen = new Set([key(start.x, start.y, ctx.cols)]);
+    let current = start;
+    for (let i = 0; i < 80; i++) {
+      const currentCost = distMap[key(current.x, current.y, ctx.cols)];
+      if (!Number.isFinite(currentCost) || currentCost <= 0) break;
+      let best = null;
+      let bestCost = currentCost;
+      for (const dir of Object.keys(DIRS)) {
+        const d = DIRS[dir];
+        const next = { x: current.x + d.x, y: current.y + d.y };
+        if (next.x < 0 || next.y < 0 || next.x >= ctx.cols || next.y >= ctx.rows) continue;
+        const nextKey = key(next.x, next.y, ctx.cols);
+        if (seen.has(nextKey)) continue;
+        const cost = distMap[nextKey];
+        if (Number.isFinite(cost) && cost < bestCost) {
+          best = next;
+          bestCost = cost;
+        }
+      }
+      if (!best) break;
+      current = best;
+      seen.add(key(current.x, current.y, ctx.cols));
+      cells.push(current);
+    }
+    return { cells, distance: startCost };
+  }
+
+  function routeInterceptGoals(ctx, tank, enemy, name) {
+    const route = enemyBaseRoute(ctx, enemy);
+    if (!route.cells.length) return [];
+    const enemyCell = route.cells[0];
+    const baseCell = cellOf(ctx.base, ctx.cols, ctx.rows);
+    const candidates = [];
+    const maxIndex = Math.min(route.cells.length - 1, 18);
+    for (let i = 2; i <= maxIndex; i++) {
+      const cell = route.cells[i];
+      if (!walkable(ctx, cell.x, cell.y)) continue;
+      if (cellDist(cell, baseCell) < 3) continue;
+      candidates.push({ cell, index: i, direct: true });
+      for (const dir of Object.keys(DIRS)) {
+        const d = DIRS[dir];
+        const side = { x: cell.x + d.x, y: cell.y + d.y };
+        if (walkable(ctx, side.x, side.y)) candidates.push({ cell: side, index: i, direct: false });
+      }
+    }
+    return candidates
+      .filter((item, i, list) => item.cell && list.findIndex((other) => other.cell.x === item.cell.x && other.cell.y === item.cell.y) === i)
+      .map((item) => {
+        const box = { x: item.cell.x * TILE + 2, y: item.cell.y * TILE + 2, w: 28, h: 28 };
+        const allyRoute = routeDistanceToPoint(ctx, tank, box, false);
+        const meetGap = Number.isFinite(allyRoute) ? Math.abs(allyRoute - item.index) : 99;
+        const lineShot = item.cell.x === enemyCell.x || item.cell.y === enemyCell.y ? -5 : 0;
+        const sideBias = ownSide(ctx, box, name) ? -3 : 3;
+        const score = (Number.isFinite(allyRoute) ? allyRoute : 120) * 2.4 + meetGap * 1.6 + item.index * 0.45 + sideBias + lineShot + bulletRisk(box, ctx.bullets || [], true) * 8;
+        return { box, score };
+      })
+      .filter((item) => Number.isFinite(item.score))
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 20)
+      .map((item) => item.box);
   }
 
   function nearbyBonus(ctx, tank) {
@@ -3497,6 +3587,7 @@
         }
         ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
         const goals = [
+          ...routeInterceptGoals(ctx, tank, baseNearestTarget, name),
           ...approachGoals(ctx, baseNearestTarget),
           ...shootingPositionGoals(ctx, tank, baseNearestTarget, name),
           ...attackGoals(ctx, baseNearestTarget),
