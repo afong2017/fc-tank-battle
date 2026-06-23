@@ -1538,7 +1538,8 @@
       })
       .sort((a, b) => a.baseDistance - b.baseDistance)
       .map((item) => item.enemy);
-    return visible[0] || null;
+    if (visible.length <= 1) return visible[0] || null;
+    return visible.find((enemy) => !reservedTarget(ctx, enemy)) || visible[0] || null;
   }
 
   function nearestBaseEnemy(ctx) {
