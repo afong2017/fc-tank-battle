@@ -49,6 +49,7 @@
     highestStageCleared: 0,
     tacticalMemory: null,
     review: null,
+    autoTuning: null,
     lastFailures: [],
     evolution: null,
   };
@@ -117,8 +118,23 @@
       highestStageCleared: Math.max(0, Math.floor(Number(saved.highestStageCleared) || 0)),
       tacticalMemory: normalizeTacticalMemory(saved.tacticalMemory),
       review: normalizeReview(saved.review),
+      autoTuning: normalizeAutoTuning(saved.autoTuning),
       lastFailures: Array.isArray(saved.lastFailures) ? saved.lastFailures.slice(0, 4) : [],
       evolution: normalizeEvolution(saved.evolution),
+    };
+  }
+
+  function normalizeAutoTuning(saved = {}) {
+    return {
+      version: 1,
+      sampleGames: Math.max(0, Math.floor(Number(saved.sampleGames) || 0)),
+      midlineTriggerOffset: clamp(Number(saved.midlineTriggerOffset) || 0, 0, 4),
+      frontGuardBias: clamp(Number(saved.frontGuardBias) || 0, 0, 1),
+      meleePenalty: clamp(Number(saved.meleePenalty) || 0, 0, 1),
+      dodgeBias: clamp(Number(saved.dodgeBias) || 0, 0, 1),
+      targetPatienceScale: clamp(Number.isFinite(Number(saved.targetPatienceScale)) ? Number(saved.targetPatienceScale) : 1, 0.45, 1.25),
+      summary: typeof saved.summary === "string" ? saved.summary.slice(0, 160) : "",
+      updatedAt: Number(saved.updatedAt) || 0,
     };
   }
 
@@ -652,7 +668,7 @@
     }
     writeMatchSummary(data.currentMatch);
     const matchEvents = data.currentMatch?.id ? data.events.filter((event) => event.matchId === data.currentMatch.id) : [];
-    learnFromMatch(data.currentMatch, result, matchEvents);
+    learnFromMatch(data.currentMatch, result, matchEvents, data.events);
     saveExperience(data);
   }
 
@@ -769,6 +785,64 @@
     });
   }
 
+  function recentMatchStats(events = [], limit = 20) {
+    const groups = new Map();
+    for (const event of events || []) {
+      if (!event.matchId) continue;
+      if (!groups.has(event.matchId)) groups.set(event.matchId, []);
+      groups.get(event.matchId).push(event);
+    }
+    return Array.from(groups.values()).slice(-limit).map((items) => {
+      const counters = {};
+      for (const event of items) {
+        counters[event.type] = (counters[event.type] || 0) + 1;
+        if (event.reason) counters[event.reason] = (counters[event.reason] || 0) + 1;
+        if (event.mode) counters[`mode:${event.mode}`] = (counters[`mode:${event.mode}`] || 0) + 1;
+        if (event.type === "enemy_cross_midline" && event.timelyReturn === false) counters.late_midline = (counters.late_midline || 0) + 1;
+      }
+      return counters;
+    });
+  }
+
+  function buildAutoTuning(previous = {}, recentEvents = [], currentCounters = {}) {
+    const matches = recentMatchStats(recentEvents, 20);
+    const totals = /** @type {Record<string, number>} */ ({ ...currentCounters });
+    for (const counters of matches) {
+      for (const [key, value] of Object.entries(counters)) totals[key] = (totals[key] || 0) + value;
+    }
+    const games = Math.max(1, matches.length + 1);
+    const perGame = (key) => (Number(totals[key]) || 0) / games;
+    const cross = perGame("enemy_cross_midline");
+    const base = perGame("base_hit");
+    const deaths = perGame("ally_death");
+    const dodge = perGame("dodge_failed");
+    const stale = perGame("target_stale");
+    const stuck = perGame("ally_stuck");
+    const melee = perGame("mode:close-melee") + perGame("mode:close-melee-fire") + perGame("mode:close-melee-dodge");
+    const hardMidline = perGame("mode:hard-midline") + perGame("mode:hard-midline-fire") + perGame("mode:hard-midline-clear");
+    const lateRate = (Number(totals.enemy_cross_midline) || 0) > 0 ? (Number(totals.late_midline) || 0) / Number(totals.enemy_cross_midline) : 0;
+    const target = normalizeAutoTuning({
+      sampleGames: games,
+      midlineTriggerOffset: clamp((cross - 6) / 2.2 + lateRate * 1.8 + base * 0.5 - hardMidline * 0.08, 0, 4),
+      frontGuardBias: clamp((cross - 7) / 7 + base * 0.35 + lateRate * 0.7, 0, 1),
+      meleePenalty: clamp((melee - 8) / 16 + base * 0.22 + deaths * 0.05, 0, 1),
+      dodgeBias: clamp(dodge / 2.6 + deaths / 5.5, 0, 1),
+      targetPatienceScale: clamp(1 - stale / 9 - stuck / 16, 0.45, 1.25),
+      summary: `AUTO 修正: 中线${cross.toFixed(1)}/局 老巢${base.toFixed(2)}/局 近战${melee.toFixed(1)}/局 躲避${dodge.toFixed(1)}/局`,
+      updatedAt: Date.now(),
+    });
+    const old = normalizeAutoTuning(previous);
+    const smooth = (key, keep = 0.55) => clamp(old[key] * keep + target[key] * (1 - keep), key === "targetPatienceScale" ? 0.45 : 0, key === "targetPatienceScale" ? 1.25 : key === "midlineTriggerOffset" ? 4 : 1);
+    return normalizeAutoTuning({
+      ...target,
+      midlineTriggerOffset: smooth("midlineTriggerOffset", 0.5),
+      frontGuardBias: smooth("frontGuardBias"),
+      meleePenalty: smooth("meleePenalty"),
+      dodgeBias: smooth("dodgeBias"),
+      targetPatienceScale: smooth("targetPatienceScale", 0.5),
+    });
+  }
+
   function evolveStrategies(memory, counters = {}, result = {}, score = 0) {
     memory.evolution = normalizeEvolution(memory.evolution);
     const genes = memory.evolution.genes;
@@ -844,7 +918,7 @@
     };
   }
 
-  function learnFromMatch(match, result = {}, events = []) {
+  function learnFromMatch(match, result = {}, events = [], recentEvents = []) {
     if (!match) return;
     const memory = loadMemory();
     const counters = match.counters || {};
@@ -868,6 +942,7 @@
     }
     learnTacticalMemory(memory, events, { ...result, stage: Number(match.stage || result.stage) || 0 });
     memory.review = buildHumanReview(match, result, events);
+    memory.autoTuning = buildAutoTuning(memory.autoTuning, recentEvents, counters);
 
     const activePatches = new Set();
     for (const key of Object.keys(PATCH_RULES)) {
@@ -948,6 +1023,7 @@
     const games = Math.max(1, Number(memory.games) || 0);
     const failures = memory.failures || {};
     const evolution = normalizeEvolution(memory.evolution);
+    const autoTuning = normalizeAutoTuning(memory.autoTuning);
     const gene = (name) => evolution.genes?.[name]?.value ?? DEFAULT_STRATEGY_GENES[name]?.value ?? 0.5;
     const perGame = (key) => (Number(failures[key]) || 0) / games;
     const profile = {
@@ -956,15 +1032,19 @@
       stuckPressure: clamp(perGame("ally_stuck") / 1.8, 0, 1),
       stalePressure: clamp(perGame("target_stale") / 0.9, 0, 1),
       dodgePressure: clamp(perGame("dodge_failed") / 1.8, 0, 1),
+      autoTuning,
       genes: evolution.genes,
       activeGene: evolution.active,
     };
     profile.killConfirm = gene("killConfirm") > 0.5 || (profile.basePressure > 0.28 && (profile.stuckPressure > 0.35 || profile.stalePressure > 0.35 || profile.midlinePressure > 0.65));
     profile.laneBlockBias = gene("laneBlock");
     profile.panicGuardBias = gene("panicGuard");
-    profile.dodgeDiscipline = gene("dodgeDiscipline");
+    profile.dodgeDiscipline = clamp(gene("dodgeDiscipline") + autoTuning.dodgeBias * 0.35, 0, 1);
     profile.clearAggression = gene("clearAggression");
-    profile.targetPatience = gene("targetPatience");
+    profile.targetPatience = clamp(gene("targetPatience") * autoTuning.targetPatienceScale, 0.12, 0.96);
+    profile.midlineTriggerOffset = autoTuning.midlineTriggerOffset;
+    profile.frontGuardBias = autoTuning.frontGuardBias;
+    profile.meleePenalty = autoTuning.meleePenalty;
     return profile;
   }
 
@@ -1432,7 +1512,7 @@
       if (!upperHalf) score += 900 + (attackWeight - 1) * 160;
       if (centerY(enemy) > midline && personalDistance < TILE * 9) score += 1500;
       if (centerY(enemy) > centerY(ctx.base) - TILE * 9 && Math.abs(centerX(enemy) - centerX(ctx.base)) < TILE * 10) score += 2600;
-      if (centerY(enemy) > midline - TILE * 2.5 && Math.abs(centerX(enemy) - centerX(ctx.base)) < TILE * 11) score += 1800 + baseScore * 18;
+      if (centerY(enemy) > midline - TILE * (2.5 + (ctx.adaptive?.midlineTriggerOffset || 0)) && Math.abs(centerX(enemy) - centerX(ctx.base)) < TILE * 11) score += 1800 + baseScore * 18 + (ctx.adaptive?.frontGuardBias || 0) * 900;
       if (ctx.enemies.length < 3) score += Math.max(0, TILE * 10 - personalDistance) * 0.6;
       if (ctx.canShoot?.(tank.dir, enemy)) score += 12 + attackWeight * 2.5;
       if (threatLine(enemy, tank)) score += 7 + defendWeight * 1.2;
@@ -1828,12 +1908,13 @@
   function midlineBreachThreat(ctx) {
     const midline = (ctx.rows || 24) * TILE * 0.5;
     const baseX = centerX(ctx.base);
+    const triggerOffset = 2.2 + (ctx.adaptive?.midlineTriggerOffset || 0);
     return ctx.enemies
       .filter((enemy) => {
         if (!visibleEnemy(ctx, enemy)) return false;
         const y = centerY(enemy);
         const x = centerX(enemy);
-        const preBreach = y >= midline - TILE * 2.2 && Math.abs(x - baseX) < TILE * 11;
+        const preBreach = y >= midline - TILE * triggerOffset && Math.abs(x - baseX) < TILE * 11;
         return y >= midline || preBreach || baseThreatScore(ctx, enemy) > 18;
       })
       .sort((a, b) => {
@@ -2790,7 +2871,8 @@
     if (!target?.alive) return null;
     const distance = dist(tank, target);
     const baseCritical = dist(target, ctx.base) < TILE * 9.5 || baseThreatScore(ctx, target) > 16;
-    const nearEnough = distance < TILE * 5.8 || (baseCritical && distance < TILE * 8.6);
+    const meleePenalty = ctx.adaptive?.meleePenalty || 0;
+    const nearEnough = distance < TILE * (5.8 - meleePenalty * 1.4) || (baseCritical && distance < TILE * (8.6 - meleePenalty * 0.8));
     if (!nearEnough) return null;
 
     const risk = bulletRisk(tank, ctx.bullets || [], true);
@@ -3045,7 +3127,7 @@
         const priorityTarget = action.target && (closeCombatTarget || dist(ctx.tank, action.target) < TILE * 6.5 || baseThreatScore(ctx, action.target) > 14);
         targetLock = action.mode?.startsWith("base-intruder") || action.mode?.startsWith("spawn-defense") || /^(defend|defend-clear|base-assault|base-assault-clear)$/.test(action.mode || "")
           ? 2.1
-          : closeCombatTarget ? 1.8 : priorityTarget ? 1.45 : /^(long-range-fire|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear)$/.test(action.mode || "") ? 1.25 : 0.35;
+          : closeCombatTarget ? 1.8 : priorityTarget ? 1.45 : /^(long-range-fire|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear)$/.test(action.mode || "") ? 1.25 : 0.35;
       }
       if (action.dir && !action.hold) {
         const reversing = lastMoveDir && action.dir === OPPOSITE[lastMoveDir];
@@ -3059,12 +3141,12 @@
       if (action.target) {
         if (action.target === lastTarget) {
           targetAge += dt;
-          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear") ? 0 : targetWorkAge + dt;
+          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear") ? 0 : targetWorkAge + dt;
         } else {
           targetAge = 0;
           targetWorkAge = 0;
         }
-        if (!targetChanged && /^(long-range-fire|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear)$/.test(action.mode || "")) {
+        if (!targetChanged && /^(long-range-fire|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear)$/.test(action.mode || "")) {
           targetLock = Math.max(targetLock, baseThreatScore(ctx, action.target) > 16 ? 1.05 : 0.65);
         }
         lastTarget = action.target;
@@ -3140,6 +3222,21 @@
         const dir = routeDir(ctx, tank, [closeFreeze], closeFreeze, "bonus");
         lastMode = "near-freeze";
         return commit(ctx, { dir, fire: false, hold: false, mode: "near-freeze" }, dt);
+      }
+      if (midlineThreat && (ctx.adaptive.frontGuardBias > 0.35 || ctx.adaptive.midlineTriggerOffset > 1.2)) {
+        const shot = safeShotDir(ctx, tank, midlineThreat) || shotDir(ctx, tank, midlineThreat);
+        if (shot && ctx.canFire?.() && scan.bulletRisk < 7.8) {
+          lastMode = "auto-midline-fire";
+          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "auto-midline-fire", target: midlineThreat }, dt);
+        }
+        const goals = [...shootingPositionGoals(ctx, tank, midlineThreat, name), ...interceptGoals(ctx, midlineThreat, name), ...basePanicGoals(ctx, midlineThreat, name)];
+        const dir = routeDir(ctx, tank, goals, midlineThreat, "intercept");
+        lastMode = "auto-midline";
+        if (ctx.routeNeedsClear && ctx.canFire?.()) {
+          lastMode = "auto-midline-clear";
+          return commit(ctx, { dir, fire: true, hold: true, mode: "auto-midline-clear", target: midlineThreat }, dt);
+        }
+        return commit(ctx, { dir, fire: false, hold: false, mode: "auto-midline", target: midlineThreat }, dt);
       }
       const meleeTarget = scan.closeCombatTarget || (anchorThreat && dist(tank, anchorThreat) < TILE * 8.6 ? anchorThreat : null);
       const meleeAction = closeCombatAction(ctx, tank, meleeTarget, name);
