@@ -3191,7 +3191,9 @@
     function commit(ctx, action, dt = 0) {
       directionLock = Math.max(0, directionLock - dt);
       targetLock = Math.max(0, targetLock - dt);
-      const actionBulletThreshold = /midline|intercept|defend|base-anchor|base-assault/.test(action.mode || "") ? 14 : 9;
+      const actionBulletThreshold = /freeze-assault/.test(action.mode || "")
+        ? 18
+        : /midline|intercept|defend|base-anchor|base-assault/.test(action.mode || "") ? 14 : 9;
       if (action.dir && !action.fire && action.mode !== "dodge" && isMoveIntoEnemyBullet(ctx.tank, action.dir, ctx.bullets || [], actionBulletThreshold)) {
         const bullet = incomingBullet(ctx.tank, ctx.bullets || []);
         const escape = bullet ? dodgeDir(ctx, ctx.tank, bullet) : null;
@@ -3323,8 +3325,9 @@
 
       const freezeTarget = freezeAssaultTarget(ctx, tank, name);
       if (freezeTarget) {
-        const shot = safeShotDir(ctx, tank, freezeTarget) || shotDir(ctx, tank, freezeTarget);
-        if (shot && ctx.canFire?.() && scan.bulletRisk < 10.5) {
+        const freezeBasePressure = baseThreatScore(ctx, freezeTarget) > 12 || dist(freezeTarget, ctx.base) < TILE * 12;
+        const shot = (freezeBasePressure ? panicShotDir(ctx, tank, freezeTarget) : null) || safeShotDir(ctx, tank, freezeTarget) || shotDir(ctx, tank, freezeTarget);
+        if (shot && ctx.canFire?.() && scan.bulletRisk < (freezeBasePressure ? 18 : 10.5)) {
           lastMode = "freeze-assault-fire";
           return commit(ctx, { dir: shot, fire: true, hold: true, mode: "freeze-assault-fire", target: freezeTarget }, dt);
         }
@@ -3333,7 +3336,18 @@
           lastMode = "freeze-assault-clear";
           return commit(ctx, { dir: lineClear, fire: true, hold: true, mode: "freeze-assault-clear", target: freezeTarget }, dt);
         }
-        const goals = [...shootingPositionGoals(ctx, tank, freezeTarget, name), ...attackGoals(ctx, freezeTarget), ...approachGoals(ctx, freezeTarget), ...interceptGoals(ctx, freezeTarget, name)];
+        const tacticalClear = tacticalClearDir(ctx, tank, freezeTarget);
+        if (tacticalClear && ctx.canFire?.() && freezeBasePressure) {
+          lastMode = "freeze-assault-clear";
+          return commit(ctx, { dir: tacticalClear, fire: true, hold: true, mode: "freeze-assault-clear", target: freezeTarget }, dt);
+        }
+        const goals = [
+          ...(freezeBasePressure ? basePanicGoals(ctx, freezeTarget, name) : []),
+          ...shootingPositionGoals(ctx, tank, freezeTarget, name),
+          ...attackGoals(ctx, freezeTarget),
+          ...approachGoals(ctx, freezeTarget),
+          ...interceptGoals(ctx, freezeTarget, name),
+        ];
         const dir = routeDir(ctx, tank, goals, freezeTarget, "attack");
         lastMode = "freeze-assault";
         if (ctx.routeNeedsClear && ctx.canFire?.()) {
