@@ -3204,7 +3204,7 @@
         directionLock = 0;
         const closeCombatTarget = action.target && dist(ctx.tank, action.target) < TILE * 3.8;
         const priorityTarget = action.target && (closeCombatTarget || dist(ctx.tank, action.target) < TILE * 6.5 || baseThreatScore(ctx, action.target) > 14);
-        targetLock = action.mode?.startsWith("base-intruder") || action.mode?.startsWith("spawn-defense") || action.mode?.startsWith("spawn-assault") || /^(defend|defend-clear|base-assault|base-assault-clear)$/.test(action.mode || "")
+        targetLock = action.mode?.startsWith("base-intruder") || action.mode?.startsWith("spawn-defense") || action.mode?.startsWith("spawn-assault") || action.mode?.startsWith("target-execute") || /^(defend|defend-clear|base-assault|base-assault-clear)$/.test(action.mode || "")
           ? 2.1
           : closeCombatTarget ? 1.8 : priorityTarget ? 1.45 : /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear)$/.test(action.mode || "") ? 1.25 : 0.35;
       }
@@ -3220,12 +3220,12 @@
       if (action.target) {
         if (action.target === lastTarget) {
           targetAge += dt;
-          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "freeze-assault-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear" || action.mode === "spawn-assault-clear") ? 0 : targetWorkAge + dt;
+          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "freeze-assault-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear" || action.mode === "spawn-assault-clear" || action.mode === "target-execute-clear") ? 0 : targetWorkAge + dt;
         } else {
           targetAge = 0;
           targetWorkAge = 0;
         }
-        if (!targetChanged && /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear|spawn-assault|spawn-assault-fire|spawn-assault-clear)$/.test(action.mode || "")) {
+        if (!targetChanged && /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear|spawn-assault|spawn-assault-fire|spawn-assault-clear|target-execute|target-execute-fire|target-execute-clear)$/.test(action.mode || "")) {
           targetLock = Math.max(targetLock, baseThreatScore(ctx, action.target) > 16 ? 1.05 : 0.65);
         }
         lastTarget = action.target;
@@ -3238,6 +3238,22 @@
       thinkCooldown = urgent ? 0.045 : action.hold ? 0.06 : 0.11;
       lastAction = action;
       return action;
+    }
+
+    function committedThreatTarget(ctx, scan) {
+      if (!lastTarget?.alive || targetLock <= 0 || !eligibleSideTarget(ctx, lastTarget, name)) return null;
+      if (scan.forced) return null;
+      const tank = ctx.tank;
+      const targetBaseScore = baseThreatScore(ctx, lastTarget);
+      const close = dist(tank, lastTarget) < TILE * 6.8;
+      const midline = centerY(lastTarget) > (ctx.rows || 24) * TILE * 0.5 - TILE * 3.5;
+      const baseCritical = targetBaseScore > 14 || dist(lastTarget, ctx.base) < TILE * 10.5;
+      if (!close && !midline && !baseCritical) return null;
+      if (ctx.staleTarget === lastTarget && targetBaseScore < 18 && !close) return null;
+      const currentBase = scan.baseTarget?.alive ? baseThreatScore(ctx, scan.baseTarget) : 0;
+      if (scan.baseTarget && scan.baseTarget !== lastTarget && currentBase > targetBaseScore + 12 && dist(scan.baseTarget, ctx.base) < TILE * 8) return null;
+      if (scan.bullet && scan.bulletRisk > (baseCritical ? 12.5 : 8.5)) return null;
+      return lastTarget;
     }
 
     function decide(ctx, dt = 0) {
@@ -3298,6 +3314,7 @@
       const endgameThreat = !scan.baseTarget && !intruder ? endgameStalledThreat(ctx, tank, name) : null;
       const midlineThreat = !intruder && !anchorThreat && !laneThreat ? midlineBreachThreat(ctx) : null;
       const advancingThreat = !intruder && !anchorThreat && !laneThreat ? advancingPressureThreat(ctx, tank, name) : null;
+      const executeTarget = committedThreatTarget(ctx, scan);
       if (closeFreeze && scan.bulletRisk < 7.5) {
         const dir = routeDir(ctx, tank, [closeFreeze], closeFreeze, "bonus");
         lastMode = "near-freeze";
@@ -3324,6 +3341,37 @@
           return commit(ctx, { dir, fire: true, hold: true, mode: "freeze-assault-clear", target: freezeTarget }, dt);
         }
         return commit(ctx, { dir, fire: false, hold: false, mode: "freeze-assault", target: freezeTarget }, dt);
+      }
+
+      if (executeTarget && !freezeTarget) {
+        const shot = safeShotDir(ctx, tank, executeTarget) || shotDir(ctx, tank, executeTarget);
+        if (shot && ctx.canFire?.() && scan.bulletRisk < 10.5) {
+          lastMode = "target-execute-fire";
+          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "target-execute-fire", target: executeTarget }, dt);
+        }
+        const lineClear = attackLineClearDir(ctx, tank, executeTarget, true);
+        if (lineClear && ctx.canFire?.()) {
+          lastMode = "target-execute-clear";
+          return commit(ctx, { dir: lineClear, fire: true, hold: true, mode: "target-execute-clear", target: executeTarget }, dt);
+        }
+        const tacticalClear = tacticalClearDir(ctx, tank, executeTarget);
+        if (tacticalClear && ctx.canFire?.()) {
+          lastMode = "target-execute-clear";
+          return commit(ctx, { dir: tacticalClear, fire: true, hold: true, mode: "target-execute-clear", target: executeTarget }, dt);
+        }
+        const goals = [
+          ...shootingPositionGoals(ctx, tank, executeTarget, name),
+          ...interceptGoals(ctx, executeTarget, name),
+          ...attackGoals(ctx, executeTarget).slice(0, 16),
+          ...approachGoals(ctx, executeTarget).slice(0, 12),
+        ];
+        const dir = routeDir(ctx, tank, goals, executeTarget, baseThreatScore(ctx, executeTarget) > 16 ? "intercept" : "attack");
+        lastMode = "target-execute";
+        if (ctx.routeNeedsClear && ctx.canFire?.()) {
+          lastMode = "target-execute-clear";
+          return commit(ctx, { dir, fire: true, hold: true, mode: "target-execute-clear", target: executeTarget }, dt);
+        }
+        return commit(ctx, { dir, fire: false, hold: false, mode: "target-execute", target: executeTarget }, dt);
       }
 
       if (midlineThreat && (ctx.adaptive.frontGuardBias > 0.35 || ctx.adaptive.midlineTriggerOffset > 1.2)) {
