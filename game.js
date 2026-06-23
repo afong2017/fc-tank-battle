@@ -1353,16 +1353,28 @@ function broadcastAllyFire(tank, dir = tank.dir, phase = "aim") {
 
 function fireToward(tank, dir, aiControlled = false, action = null) {
   if (!DIRS[dir]) return false;
-  const oldDir = tank.dir;
-  if (dir !== tank.dir) {
-    if ((tank.turnCooldown || 0) > 0) return false;
-  }
-  tank.dir = dir;
+  if (!faceTankToward(tank, dir)) return false;
   const safe = !action || aiShotSafe(tank, action);
   const fired = safe ? fire(tank, aiControlled) : false;
-  if (fired && dir !== oldDir) tank.turnCooldown = TANK_TURN_DELAY;
-  if (!fired) tank.dir = oldDir;
   return fired;
+}
+
+function perpendicularTurnDir(current, desired) {
+  if ((current === "up" || current === "down") && (desired === "up" || desired === "down")) return "left";
+  if ((current === "left" || current === "right") && (desired === "left" || desired === "right")) return "up";
+  return desired;
+}
+
+function faceTankToward(tank, desiredDir) {
+  if (!DIRS[desiredDir]) return false;
+  if (tank.dir === desiredDir) return true;
+  if ((tank.turnCooldown || 0) > 0) return false;
+  const nextDir = oppositeDir(tank.dir) === desiredDir
+    ? perpendicularTurnDir(tank.dir, desiredDir)
+    : desiredDir;
+  tank.dir = nextDir;
+  tank.turnCooldown = TANK_TURN_DELAY;
+  return false;
 }
 
 function tankSpeedCap(tank) {
@@ -1390,10 +1402,7 @@ function clampTankMotion(tank, beforeX, beforeY, dt) {
 function moveTank(tank, dir, dt) {
   if (!DIRS[dir]) return false;
   tank.snapCooldown = Math.max(0, (tank.snapCooldown || 0) - dt);
-  const oldDir = tank.dir;
-  if (dir !== tank.dir) {
-    if ((tank.turnCooldown || 0) > 0) return false;
-  }
+  if (!faceTankToward(tank, dir)) return false;
   const d = DIRS[dir];
   const speed = tankSpeedCap(tank);
   const budgetDt = Math.max(0, Math.min(dt, 0.033));
@@ -1407,8 +1416,6 @@ function moveTank(tank, dir, dt) {
   const step = remaining;
   const next = { x: tank.x + d.x * step, y: tank.y + d.y * step, w: tank.w, h: tank.h };
   if (!blocked(next, tank)) {
-    tank.dir = dir;
-    if (dir !== oldDir) tank.turnCooldown = TANK_TURN_DELAY;
     tank.x = next.x;
     tank.y = next.y;
     tank.moveFrameDistance += step;
@@ -1688,11 +1695,9 @@ function enemyShotSafe(tank) {
 function enemyFireTowardBase(tank) {
   const dir = enemyBaseFireDir(tank);
   if (!dir || tank.cooldown > 0) return false;
-  const oldDir = tank.dir;
-  tank.dir = dir;
+  if (!faceTankToward(tank, dir)) return false;
   const safe = enemyShotSafe(tank);
   const fired = safe ? fire(tank) : false;
-  if (!fired) tank.dir = oldDir;
   return fired;
 }
 
