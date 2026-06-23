@@ -3361,7 +3361,7 @@
         targetLock = 0;
       }
       const urgent = action.mode?.includes("dodge") || action.mode?.includes("melee") || action.mode?.includes("fire") || action.mode?.includes("clear");
-      thinkCooldown = urgent ? 0.045 : action.hold ? 0.06 : 0.11;
+      thinkCooldown = action.target ? 0.035 : urgent ? 0.045 : action.hold ? 0.06 : 0.11;
       lastAction = action;
       return action;
     }
@@ -3482,13 +3482,11 @@
         }
         ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
         const goals = [
-          ...routeInterceptGoals(ctx, tank, baseNearestTarget, name),
           ...approachGoals(ctx, baseNearestTarget),
           ...shootingPositionGoals(ctx, tank, baseNearestTarget, name),
           ...attackGoals(ctx, baseNearestTarget),
-          ...interceptGoals(ctx, baseNearestTarget, name).slice(0, 12),
         ];
-        const dir = routeDir(ctx, tank, goals, baseNearestTarget, "attack");
+        const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, "attack") || directionTo(tank, baseNearestTarget);
         lastMode = "base-nearest-hunt";
         return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
       }
@@ -3601,8 +3599,14 @@
           lastMode = "blind-forest-fire";
           return commit(ctx, { dir: blindShot, fire: true, hold: true, mode: "blind-forest-fire" }, dt);
         }
-        lastMode = "hunt-idle";
-        return commit(ctx, { dir: null, fire: false, hold: true, mode: "hunt-idle" }, dt);
+        const fallbackTarget = nearestBaseEnemy(ctx) || bestEnemy(ctx, tank, name);
+        if (fallbackTarget) {
+          const dir = directionTo(tank, fallbackTarget);
+          lastMode = "hunt-direct";
+          return commit(ctx, { dir, fire: false, hold: false, mode: "hunt-direct", target: fallbackTarget }, dt);
+        }
+        lastMode = "hunt-scan";
+        return commit(ctx, { dir: tank.dir, fire: false, hold: false, mode: "hunt-scan" }, dt);
       }
 
       if (midlineThreat && (ctx.adaptive.frontGuardBias > 0.35 || ctx.adaptive.midlineTriggerOffset > 1.2)) {
