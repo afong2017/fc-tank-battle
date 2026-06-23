@@ -1141,13 +1141,13 @@
       const dx = Math.abs(centerX(tank) - centerX(b));
       const dy = Math.abs(centerY(tank) - centerY(b));
       let risk = 0;
-      if ((b.dir === "up" || b.dir === "down") && dx < 42) {
+      if ((b.dir === "up" || b.dir === "down") && dx < 54) {
         const coming = b.dir === "up" ? centerY(b) > centerY(tank) : centerY(b) < centerY(tank);
-        if (coming) risk = Math.max(0, 340 - dy) + Math.max(0, 42 - dx) * 4.8;
+        if (coming) risk = Math.max(0, 360 - dy) + Math.max(0, 54 - dx) * 4.8;
       }
-      if ((b.dir === "left" || b.dir === "right") && dy < 42) {
+      if ((b.dir === "left" || b.dir === "right") && dy < 54) {
         const coming = b.dir === "left" ? centerX(b) > centerX(tank) : centerX(b) < centerX(tank);
-        if (coming) risk = Math.max(0, 340 - dx) + Math.max(0, 42 - dy) * 4.8;
+        if (coming) risk = Math.max(0, 360 - dx) + Math.max(0, 54 - dy) * 4.8;
       }
       if (risk > bestRisk) {
         best = b;
@@ -3236,10 +3236,24 @@
         targetWorkAge = 0;
         targetLock = 0;
       }
-      const urgent = action.mode === "dodge" || action.mode?.includes("melee") || action.mode?.includes("fire") || action.mode?.includes("clear");
+      const urgent = action.mode?.includes("dodge") || action.mode?.includes("melee") || action.mode?.includes("fire") || action.mode?.includes("clear");
       thinkCooldown = urgent ? 0.045 : action.hold ? 0.06 : 0.11;
       lastAction = action;
       return action;
+    }
+
+    function emergencyDodgeAction(ctx, scan) {
+      if (!scan.bullet) return null;
+      const risk = scan.bulletRisk + movePathRisk(ctx.tank, ctx.tank.dir, ctx.bullets || [], ctx.allyFireReports || []) * 0.22;
+      if (risk < 6.2) return null;
+      const target = scan.baseTarget || scan.enemyTarget;
+      const duel = risk < 8.2 ? duelShotDir(ctx, ctx.tank, target, scan.bullet) : null;
+      if (duel && ctx.canFire?.()) return { dir: duel, fire: true, hold: true, mode: "duel-fire", target };
+      const dir = dodgeDir(ctx, ctx.tank, scan.bullet);
+      if (dir && canMove(ctx, dir) && !isMoveIntoEnemyBullet(ctx.tank, dir, ctx.bullets || [], risk > 10 ? 8 : 11)) {
+        return { dir, fire: false, hold: false, mode: "emergency-dodge", target };
+      }
+      return { dir: null, fire: false, hold: true, mode: "emergency-dodge-hold", target };
     }
 
     function committedThreatTarget(ctx, scan) {
@@ -3317,6 +3331,11 @@
       const midlineThreat = !intruder && !anchorThreat && !laneThreat ? midlineBreachThreat(ctx) : null;
       const advancingThreat = !intruder && !anchorThreat && !laneThreat ? advancingPressureThreat(ctx, tank, name) : null;
       const executeTarget = committedThreatTarget(ctx, scan);
+      const emergencyDodge = emergencyDodgeAction(ctx, scan);
+      if (emergencyDodge) {
+        lastMode = emergencyDodge.mode;
+        return commit(ctx, emergencyDodge, dt);
+      }
       if (closeFreeze && scan.bulletRisk < 7.5) {
         const dir = routeDir(ctx, tank, [closeFreeze], closeFreeze, "bonus");
         lastMode = "near-freeze";
