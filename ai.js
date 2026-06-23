@@ -1141,13 +1141,13 @@
       const dx = Math.abs(centerX(tank) - centerX(b));
       const dy = Math.abs(centerY(tank) - centerY(b));
       let risk = 0;
-      if ((b.dir === "up" || b.dir === "down") && dx < 54) {
+      if ((b.dir === "up" || b.dir === "down") && dx < 64) {
         const coming = b.dir === "up" ? centerY(b) > centerY(tank) : centerY(b) < centerY(tank);
-        if (coming) risk = Math.max(0, 360 - dy) + Math.max(0, 54 - dx) * 4.8;
+        if (coming) risk = Math.max(0, 620 - dy) + Math.max(0, 64 - dx) * 5.2;
       }
-      if ((b.dir === "left" || b.dir === "right") && dy < 54) {
+      if ((b.dir === "left" || b.dir === "right") && dy < 64) {
         const coming = b.dir === "left" ? centerX(b) > centerX(tank) : centerX(b) < centerX(tank);
-        if (coming) risk = Math.max(0, 360 - dx) + Math.max(0, 54 - dy) * 4.8;
+        if (coming) risk = Math.max(0, 620 - dx) + Math.max(0, 64 - dy) * 5.2;
       }
       if (risk > bestRisk) {
         best = b;
@@ -1223,13 +1223,13 @@
     const dx = Math.abs(centerX(box) - centerX(bullet));
     const dy = Math.abs(centerY(box) - centerY(bullet));
     let risk = 0;
-    if ((bullet.dir === "up" || bullet.dir === "down") && dx < 46) {
+    if ((bullet.dir === "up" || bullet.dir === "down") && dx < 58) {
       const coming = bullet.dir === "up" ? centerY(bullet) > centerY(box) : centerY(bullet) < centerY(box);
-      if (coming) risk += (Math.max(0, 360 - dy) / 22 + Math.max(0, 46 - dx) / 4.2) * friendlyScale;
+      if (coming) risk += (Math.max(0, 620 - dy) / 24 + Math.max(0, 58 - dx) / 4.1) * friendlyScale;
     }
-    if ((bullet.dir === "left" || bullet.dir === "right") && dy < 46) {
+    if ((bullet.dir === "left" || bullet.dir === "right") && dy < 58) {
       const coming = bullet.dir === "left" ? centerX(bullet) > centerX(box) : centerX(bullet) < centerX(box);
-      if (coming) risk += (Math.max(0, 360 - dx) / 22 + Math.max(0, 46 - dy) / 4.2) * friendlyScale;
+      if (coming) risk += (Math.max(0, 620 - dx) / 24 + Math.max(0, 58 - dy) / 4.1) * friendlyScale;
     }
     return risk;
   }
@@ -1238,10 +1238,10 @@
     let risk = 0;
     for (const b of bullets) {
       risk += bulletLineRisk(box, b, includeFriendly);
-      for (const seconds of [0.18, 0.32, 0.48]) {
+      for (const seconds of [0.18, 0.32, 0.52, 0.78]) {
         const future = bulletFutureBox(b, seconds);
         const futureRisk = bulletLineRisk(box, future, includeFriendly);
-        risk += futureRisk * (seconds === 0.18 ? 0.9 : seconds === 0.32 ? 0.58 : 0.34);
+        risk += futureRisk * (seconds === 0.18 ? 0.9 : seconds === 0.32 ? 0.58 : seconds === 0.52 ? 0.38 : 0.24);
       }
     }
     return risk;
@@ -1273,17 +1273,19 @@
     const near = makeBox(tank, dir, 34);
     const far = makeBox(tank, dir, 62);
     const escape = makeBox(tank, dir, 92);
+    const long = makeBox(tank, dir, 132);
     return bulletRisk(near, bullets, includeFriendly) * 1.45
       + bulletRisk(far, bullets, includeFriendly) * 0.9
-      + bulletRisk(escape, bullets, includeFriendly) * 0.45;
+      + bulletRisk(escape, bullets, includeFriendly) * 0.45
+      + bulletRisk(long, bullets, includeFriendly) * 0.25;
   }
 
   function movePathRisk(tank, dir, bullets, reports = []) {
     let risk = 0;
-    for (const pixels of [14, 28, 42, 58, 76]) {
+    for (const pixels of [14, 28, 42, 58, 76, 104, 136]) {
       const step = makeBox(tank, dir, pixels);
-      risk += bulletRisk(step, bullets || [], true) * (pixels <= 28 ? 1.1 : 0.72);
-      risk += allyRadioRisk(step, reports) * (pixels <= 28 ? 1.0 : 0.62);
+      risk += bulletRisk(step, bullets || [], true) * (pixels <= 28 ? 1.1 : pixels <= 76 ? 0.72 : 0.42);
+      risk += allyRadioRisk(step, reports) * (pixels <= 28 ? 1.0 : pixels <= 76 ? 0.62 : 0.34);
     }
     return risk;
   }
