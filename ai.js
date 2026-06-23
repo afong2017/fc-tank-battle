@@ -1358,6 +1358,12 @@
     if (ey > by - TILE * 7 && Math.abs(ex - bx) < TILE * 11) score += 12;
     if (enemy.dir === "down" && ey < by) score += 12;
     if ((enemy.dir === "left" || enemy.dir === "right") && Math.abs(ey - by) < TILE * 5) score += 9;
+    const fieldMid = (ctx.rows || 24) * TILE * 0.5;
+    const centerLane = lane < TILE * 5.6;
+    const lowerCenterLane = ey > fieldMid - TILE * 2.8 && lane < TILE * 8.5;
+    if (centerLane && ey > fieldMid - TILE * 5.5) score += 14;
+    if (lowerCenterLane) score += 20 + Math.max(0, ey - (fieldMid - TILE * 2.8)) / 18;
+    if (enemy.dir === "down" && lane < TILE * 9 && ey > fieldMid - TILE * 6.5) score += 16;
     score += Math.max(0, tacticalZoneScore(ctx, enemy, "baseThreatZones")) * 0.85;
     if (ey > (ctx.rows || 24) * TILE * 0.5) score += 18 + Math.max(0, by - ey) / 22;
     if (ey > by - TILE * 9 && Math.abs(ex - bx) < TILE * 9) score += 22;
@@ -1908,18 +1914,21 @@
   function midlineBreachThreat(ctx) {
     const midline = (ctx.rows || 24) * TILE * 0.5;
     const baseX = centerX(ctx.base);
-    const triggerOffset = 2.2 + (ctx.adaptive?.midlineTriggerOffset || 0);
+    const triggerOffset = 3.4 + (ctx.adaptive?.midlineTriggerOffset || 0) * 1.15;
     return ctx.enemies
       .filter((enemy) => {
         if (!visibleEnemy(ctx, enemy)) return false;
         const y = centerY(enemy);
         const x = centerX(enemy);
-        const preBreach = y >= midline - TILE * triggerOffset && Math.abs(x - baseX) < TILE * 11;
-        return y >= midline || preBreach || baseThreatScore(ctx, enemy) > 18;
+        const centralApproach = y >= midline - TILE * (triggerOffset + 1.4) && Math.abs(x - baseX) < TILE * 7.5;
+        const preBreach = y >= midline - TILE * triggerOffset && Math.abs(x - baseX) < TILE * 12;
+        return y >= midline || centralApproach || preBreach || baseThreatScore(ctx, enemy) > 16;
       })
       .sort((a, b) => {
-        const aScore = baseThreatScore(ctx, a) * 18 + Math.max(0, centerY(a) - (midline - TILE * 2)) - dist(a, ctx.base) * 0.35;
-        const bScore = baseThreatScore(ctx, b) * 18 + Math.max(0, centerY(b) - (midline - TILE * 2)) - dist(b, ctx.base) * 0.35;
+        const aCenter = Math.max(0, TILE * 9 - Math.abs(centerX(a) - baseX)) * 1.8;
+        const bCenter = Math.max(0, TILE * 9 - Math.abs(centerX(b) - baseX)) * 1.8;
+        const aScore = baseThreatScore(ctx, a) * 20 + aCenter + Math.max(0, centerY(a) - (midline - TILE * 3.5)) - dist(a, ctx.base) * 0.32;
+        const bScore = baseThreatScore(ctx, b) * 20 + bCenter + Math.max(0, centerY(b) - (midline - TILE * 3.5)) - dist(b, ctx.base) * 0.32;
         if (Math.abs(aScore - bScore) > 8) return bScore - aScore;
         return centerY(b) - centerY(a);
       })[0] || null;
@@ -2019,22 +2028,27 @@
 
   function midlineDefenseGoals(ctx, name) {
     const baseCell = cellOf(ctx.base, ctx.cols, ctx.rows);
+    const midY = Math.floor((ctx.rows || 24) * 0.5);
+    const leftGate = baseCell.x - 3;
+    const rightGate = baseCell.x + 4;
     const cells = name === "1P"
       ? [
-          { x: 8, y: 22 },
-          { x: 8, y: 21 },
-          { x: 7, y: 22 },
-          { x: 9, y: 22 },
-          { x: 7, y: 21 },
-          { x: 9, y: 21 },
+          { x: leftGate, y: midY + 3 },
+          { x: leftGate - 1, y: midY + 3 },
+          { x: leftGate, y: midY + 4 },
+          { x: baseCell.x - 4, y: baseCell.y - 6 },
+          { x: baseCell.x - 5, y: baseCell.y - 5 },
+          { x: baseCell.x - 3, y: baseCell.y - 7 },
+          { x: baseCell.x - 2, y: baseCell.y - 5 },
         ]
       : [
-          { x: baseCell.x, y: baseCell.y - 4 },
-          { x: baseCell.x + 1, y: baseCell.y - 4 },
-          { x: baseCell.x - 1, y: baseCell.y - 4 },
-          { x: baseCell.x + 2, y: baseCell.y - 4 },
-          { x: baseCell.x, y: baseCell.y - 5 },
-          { x: baseCell.x + 1, y: baseCell.y - 5 },
+          { x: rightGate, y: midY + 3 },
+          { x: rightGate + 1, y: midY + 3 },
+          { x: rightGate, y: midY + 4 },
+          { x: baseCell.x + 4, y: baseCell.y - 6 },
+          { x: baseCell.x + 5, y: baseCell.y - 5 },
+          { x: baseCell.x + 3, y: baseCell.y - 7 },
+          { x: baseCell.x + 2, y: baseCell.y - 5 },
         ];
     const goals = cells.filter((c) => walkable(ctx, c.x, c.y));
     return (goals.length ? goals : guardGoals(ctx, name).map((goal) => cellOf(goal, ctx.cols, ctx.rows)))
