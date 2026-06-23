@@ -3048,6 +3048,21 @@
     return shot;
   }
 
+  function mustDuelShotDir(ctx, tank, target) {
+    if (!target?.alive || !ctx.canFire?.()) return null;
+    const shot = shotDir(ctx, tank, target);
+    if (!shot || shot !== tank.dir) return null;
+    const sameVerticalLane = Math.abs(centerX(tank) - centerX(target)) < 18;
+    const sameHorizontalLane = Math.abs(centerY(tank) - centerY(target)) < 18;
+    const faceToFace =
+      (sameVerticalLane && shot === "up" && target.dir === "down" && centerY(target) < centerY(tank)) ||
+      (sameVerticalLane && shot === "down" && target.dir === "up" && centerY(target) > centerY(tank)) ||
+      (sameHorizontalLane && shot === "left" && target.dir === "right" && centerX(target) < centerX(tank)) ||
+      (sameHorizontalLane && shot === "right" && target.dir === "left" && centerX(target) > centerX(tank));
+    if (!faceToFace) return null;
+    return certainHit(ctx, tank, shot, target) ? shot : null;
+  }
+
   function sideLaneShotTooEarly(ctx, tank, target, dir = null) {
     if (!target?.alive) return false;
     if (dist(tank, target) > TILE * 5.5) return false;
@@ -3087,6 +3102,10 @@
     const risk = bulletRisk(tank, ctx.bullets || [], true);
     const bullet = incomingBullet(tank, ctx.bullets || []) || incomingFriendlyBullet(tank, ctx.bullets || []);
     const surviveFirst = hasDirective(ctx, "MELEE_SURVIVE_FIRST") || (ctx.adaptive?.dodgePressure || 0) > 0.35;
+    const mustDuel = mustDuelShotDir(ctx, tank, target);
+    if (mustDuel) {
+      return { dir: mustDuel, fire: true, hold: true, mode: "close-melee-duel", target };
+    }
     if (surviveFirst && bullet && risk > 2.4) {
       const dir = dodgeDir(ctx, tank, bullet);
       if (dir) return { dir, fire: false, hold: false, mode: "close-melee-dodge", target };
@@ -3393,6 +3412,8 @@
       const risk = scan.bulletRisk + movePathRisk(ctx.tank, ctx.tank.dir, ctx.bullets || [], ctx.allyFireReports || []) * 0.22;
       if (risk < 6.2) return null;
       const target = scan.baseTarget || scan.enemyTarget;
+      const mustDuel = mustDuelShotDir(ctx, ctx.tank, target);
+      if (mustDuel) return { dir: mustDuel, fire: true, hold: true, mode: "duel-fire", target };
       const duel = risk < 8.2 ? duelShotDir(ctx, ctx.tank, target, scan.bullet) : null;
       if (duel && ctx.canFire?.()) return { dir: duel, fire: true, hold: true, mode: "duel-fire", target };
       const dir = dodgeDir(ctx, ctx.tank, scan.bullet);
