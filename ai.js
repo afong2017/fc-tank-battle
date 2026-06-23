@@ -1533,19 +1533,32 @@
     return best;
   }
 
-  function nearestBaseEnemy(ctx) {
+  function baseApproachTarget(ctx) {
     const visible = (ctx.enemies || [])
       .filter((enemy) => visibleEnemy(ctx, enemy))
-      .sort((a, b) => {
-        const baseDelta = dist(a, ctx.base) - dist(b, ctx.base);
-        if (Math.abs(baseDelta) > TILE * 0.5) return baseDelta;
-        return centerY(b) - centerY(a);
-      });
+      .map((enemy) => {
+        const baseDistance = dist(enemy, ctx.base);
+        const routeToBase = routeDistanceToPoint(ctx, enemy, ctx.base, false);
+        const routeScore = Number.isFinite(routeToBase) ? routeToBase * TILE : baseDistance + TILE * 10;
+        const lane = Math.abs(centerX(enemy) - centerX(ctx.base));
+        let eta = Math.min(baseDistance, routeScore);
+        if (enemy.dir === "down" && centerY(enemy) < centerY(ctx.base)) eta -= TILE * 5;
+        if (lane < TILE * 4.5) eta -= TILE * 4;
+        if (centerY(enemy) > (ctx.rows || 24) * TILE * 0.5) eta -= TILE * 3;
+        eta -= baseThreatScore(ctx, enemy) * 5.5;
+        return { enemy, eta };
+      })
+      .sort((a, b) => a.eta - b.eta)
+      .map((item) => item.enemy);
     if (visible.length <= 1) return visible[0] || null;
     return visible
       .find((enemy) => !reservedTarget(ctx, enemy))
       || visible[0]
       || null;
+  }
+
+  function nearestBaseEnemy(ctx) {
+    return baseApproachTarget(ctx);
   }
 
   function immediateEnemy(ctx, tank, name) {
@@ -2665,7 +2678,7 @@
     const surviveWeight = styleWeight(ctx, "survive");
     const avoidStaleRoute = hasDirective(ctx, "AVOID_STALE_ROUTE");
     const learnedUnstuck = (ctx.adaptive?.stuckPressure || 0) > 0.45 || (ctx.adaptive?.stalePressure || 0) > 0.45 || (ctx.adaptive?.clearAggression || 0) > 0.72;
-    const allowBrickClear = chaseStalled || mode === "attack" || mode === "intercept" || mode === "defend" || hasPatch(ctx, "unstuck_clear") || learnedUnstuck;
+    const allowBrickClear = !ctx.disableBrickClear && (chaseStalled || mode === "attack" || mode === "intercept" || mode === "defend" || hasPatch(ctx, "unstuck_clear") || learnedUnstuck);
     const bulletThreshold = routeBulletThreshold(mode);
     const aStarRoute = findAStarRoute(ctx, tank, goals, allowBrickClear);
     if (aStarRoute?.dir) {
@@ -3064,6 +3077,7 @@
   }
 
   function attackLineClearDir(ctx, tank, target, basePriority = false) {
+    if (ctx.disableBrickClear) return null;
     if (!target?.alive) return null;
     if (baseDangerClose(ctx, target)) return null;
     if (alignedWithBase(ctx, target)) return null;
@@ -3099,6 +3113,7 @@
   }
 
   function tacticalClearDir(ctx, tank, target) {
+    if (ctx.disableBrickClear) return null;
     if (!target?.alive || alignedWithBase(ctx, target)) return null;
     const targetPressure = dist(target, ctx.base) < TILE * 11 || baseThreatScore(ctx, target) > 10 || dist(tank, target) < TILE * 8;
     if (!targetPressure) return null;
@@ -3315,6 +3330,7 @@
       ctx.adaptive = adaptiveProfile(memory);
       ctx.tacticalMemory = memory.tacticalMemory || normalizeTacticalMemory();
       ctx.review = normalizeReview(memory.review);
+      ctx.disableBrickClear = true;
       const urgentKey = [
         Math.round((ctx.tank?.x || 0) / 16),
         Math.round((ctx.tank?.y || 0) / 16),
@@ -3358,7 +3374,7 @@
       const closeFreeze = nearFreezeBonus(ctx, tank);
       const urgentFreeze = urgentFreezeBonus(ctx, tank);
       const bonus = !scan.emergency && !visibleBasePressure ? nearbyBonus(ctx, tank) : null;
-      const baseNearestTarget = nearestBaseEnemy(ctx);
+      const baseNearestTarget = baseApproachTarget(ctx);
       const intruder = baseIntruder(ctx, name);
       const anchorThreat = baseAnchorThreat(ctx);
       const laneThreat = baseFireLaneThreat(ctx);
@@ -3474,14 +3490,10 @@
 
       if (baseNearestTarget) {
         const shot = safeShotDir(ctx, tank, baseNearestTarget) || shotDir(ctx, tank, baseNearestTarget);
-        if (shot && ctx.canFire?.() && scan.bulletRisk < 8.8) {
+        const closeAssault = dist(tank, baseNearestTarget) < TILE * 8.5;
+        if (shot && ctx.canFire?.() && scan.bulletRisk < (closeAssault ? 12.5 : 8.8)) {
           lastMode = "base-nearest-hunt-fire";
           return commit(ctx, { dir: shot, fire: true, hold: true, mode: "base-nearest-hunt-fire", target: baseNearestTarget }, dt);
-        }
-        const lineClear = attackLineClearDir(ctx, tank, baseNearestTarget, true) || tacticalClearDir(ctx, tank, baseNearestTarget);
-        if (lineClear && ctx.canFire?.()) {
-          lastMode = "base-nearest-hunt-clear";
-          return commit(ctx, { dir: lineClear, fire: true, hold: true, mode: "base-nearest-hunt-clear", target: baseNearestTarget }, dt);
         }
         ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
         const goals = [
@@ -3492,10 +3504,6 @@
         ];
         const dir = routeDir(ctx, tank, goals, baseNearestTarget, "attack");
         lastMode = "base-nearest-hunt";
-        if (ctx.routeNeedsClear && ctx.canFire?.()) {
-          lastMode = "base-nearest-hunt-clear";
-          return commit(ctx, { dir, fire: true, hold: true, mode: "base-nearest-hunt-clear", target: baseNearestTarget }, dt);
-        }
         return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
       }
 
