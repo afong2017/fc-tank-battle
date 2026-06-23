@@ -1534,13 +1534,18 @@
   }
 
   function nearestBaseEnemy(ctx) {
-    return (ctx.enemies || [])
+    const visible = (ctx.enemies || [])
       .filter((enemy) => visibleEnemy(ctx, enemy))
       .sort((a, b) => {
         const baseDelta = dist(a, ctx.base) - dist(b, ctx.base);
         if (Math.abs(baseDelta) > TILE * 0.5) return baseDelta;
         return centerY(b) - centerY(a);
-      })[0] || null;
+      });
+    if (visible.length <= 1) return visible[0] || null;
+    return visible
+      .find((enemy) => !reservedTarget(ctx, enemy))
+      || visible[0]
+      || null;
   }
 
   function immediateEnemy(ctx, tank, name) {
