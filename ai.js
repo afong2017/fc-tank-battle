@@ -1539,7 +1539,7 @@
       .sort((a, b) => a.baseDistance - b.baseDistance)
       .map((item) => item.enemy);
     if (visible.length <= 1) return visible[0] || null;
-    return visible.find((enemy) => !reservedTarget(ctx, enemy)) || visible[0] || null;
+    return visible.find((enemy) => !reservedTarget(ctx, enemy) || dist(ctx.tank, enemy) < TILE * 5.4) || visible[0] || null;
   }
 
   function nearestBaseEnemy(ctx) {
@@ -3495,6 +3495,11 @@
         lastMode = emergencyDodge.mode;
         return commit(ctx, emergencyDodge, dt);
       }
+      if (closeFreeze && scan.bulletRisk < 7.5) {
+        const dir = routeDir(ctx, tank, [closeFreeze], closeFreeze, "bonus");
+        lastMode = "near-freeze";
+        return commit(ctx, { dir, fire: false, hold: false, mode: "near-freeze" }, dt);
+      }
       if (baseNearestTarget) {
         const shot = safeShotDir(ctx, tank, baseNearestTarget) || shotDir(ctx, tank, baseNearestTarget);
         const closeAssault = dist(tank, baseNearestTarget) < TILE * 8.5;
@@ -3511,11 +3516,6 @@
           return commit(ctx, { dir, fire: true, hold: true, mode: "base-nearest-hunt-clear", target: baseNearestTarget }, dt);
         }
         return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
-      }
-      if (closeFreeze && scan.bulletRisk < 7.5) {
-        const dir = routeDir(ctx, tank, [closeFreeze], closeFreeze, "bonus");
-        lastMode = "near-freeze";
-        return commit(ctx, { dir, fire: false, hold: false, mode: "near-freeze" }, dt);
       }
 
       const freezeTarget = freezeAssaultTarget(ctx, tank, name);
