@@ -3428,6 +3428,7 @@
       ctx.tacticalMemory = memory.tacticalMemory || normalizeTacticalMemory();
       ctx.review = normalizeReview(memory.review);
       ctx.disableBrickClear = true;
+      ctx.aggressiveOnly = true;
       const urgentKey = [
         Math.round((ctx.tank?.x || 0) / 16),
         Math.round((ctx.tank?.y || 0) / 16),
@@ -3603,6 +3604,21 @@
         const dir = routeDir(ctx, tank, goals, baseNearestTarget, "attack");
         lastMode = "base-nearest-hunt";
         return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
+      }
+
+      if (ctx.aggressiveOnly) {
+        if (scan.bullet) {
+          const dir = dodgeDir(ctx, tank, scan.bullet);
+          lastMode = "dodge";
+          return commit(ctx, { dir, fire: false, hold: false, mode: "dodge" }, dt);
+        }
+        const blindShot = blindForestShotDir(ctx, tank);
+        if (blindShot) {
+          lastMode = "blind-forest-fire";
+          return commit(ctx, { dir: blindShot, fire: true, hold: true, mode: "blind-forest-fire" }, dt);
+        }
+        lastMode = "hunt-idle";
+        return commit(ctx, { dir: null, fire: false, hold: true, mode: "hunt-idle" }, dt);
       }
 
       if (midlineThreat && (ctx.adaptive.frontGuardBias > 0.35 || ctx.adaptive.midlineTriggerOffset > 1.2)) {
