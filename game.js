@@ -2751,8 +2751,8 @@ function drawTargetLink(tank, color, reservedTargets = []) {
     : null);
   const target = lockedTarget || currentTarget;
   if (!tank?.alive || !visibleEnemyForAlly(target)) return;
-  if (tank.attackRouteTarget && tank.attackRouteTarget !== target) return target;
-  if (tank.attackRouteMode && !isAttackRouteMode(tank.attackRouteMode)) return target;
+  if (tank.attackRouteTarget !== target) return target;
+  if (!isAttackRouteMode(tank.attackRouteMode)) return target;
   const route = tank.attackRoute?.length ? tank.attackRoute : [];
   const a = centerOf(tank);
   const b = centerOf(target);
