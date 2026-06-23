@@ -2026,6 +2026,40 @@
       .sort((a, b) => b.score - a.score)[0]?.enemy || null;
   }
 
+  function spawnAssaultGoals(ctx, tank, enemy, name) {
+    if (!enemy?.alive) return [];
+    const spawn = spawnPoint(ctx, name);
+    const enemyCell = cellOf(enemy, ctx.cols, ctx.rows);
+    const spawnCell = cellOf(spawn, ctx.cols, ctx.rows);
+    const side = name === "1P" ? -1 : 1;
+    const cells = [
+      { x: enemyCell.x, y: enemyCell.y - 1 },
+      { x: enemyCell.x, y: enemyCell.y + 1 },
+      { x: enemyCell.x - 1, y: enemyCell.y },
+      { x: enemyCell.x + 1, y: enemyCell.y },
+      { x: enemyCell.x - side, y: enemyCell.y },
+      { x: enemyCell.x + side, y: enemyCell.y },
+      { x: spawnCell.x, y: spawnCell.y - 2 },
+      { x: spawnCell.x + side, y: spawnCell.y - 2 },
+      { x: spawnCell.x - side, y: spawnCell.y - 2 },
+      { x: spawnCell.x, y: spawnCell.y - 3 },
+    ];
+    return cells
+      .filter((c, i, list) => c && list.findIndex((other) => other.x === c.x && other.y === c.y) === i)
+      .filter((c) => walkable(ctx, c.x, c.y))
+      .map((cell) => {
+        const box = { x: cell.x * TILE + 2, y: cell.y * TILE + 2, w: 28, h: 28 };
+        const shot = firingProfile(ctx, cell, enemyCell);
+        const route = routeDistanceToTarget(ctx, tank, box);
+        const spawnValue = Math.max(0, TILE * 7 - dist(box, spawn)) * 0.4;
+        const shootValue = shot.viable ? 420 - shot.rank * 60 : 0;
+        return { box, score: (Number.isFinite(route) ? route * 38 : 1200) - shootValue - spawnValue + bulletRisk(box, ctx.bullets || []) * 70 };
+      })
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 10)
+      .map((item) => item.box);
+  }
+
   function midlineDefenseGoals(ctx, name) {
     const baseCell = cellOf(ctx.base, ctx.cols, ctx.rows);
     const midY = Math.floor((ctx.rows || 24) * 0.5);
@@ -3170,7 +3204,7 @@
         directionLock = 0;
         const closeCombatTarget = action.target && dist(ctx.tank, action.target) < TILE * 3.8;
         const priorityTarget = action.target && (closeCombatTarget || dist(ctx.tank, action.target) < TILE * 6.5 || baseThreatScore(ctx, action.target) > 14);
-        targetLock = action.mode?.startsWith("base-intruder") || action.mode?.startsWith("spawn-defense") || /^(defend|defend-clear|base-assault|base-assault-clear)$/.test(action.mode || "")
+        targetLock = action.mode?.startsWith("base-intruder") || action.mode?.startsWith("spawn-defense") || action.mode?.startsWith("spawn-assault") || /^(defend|defend-clear|base-assault|base-assault-clear)$/.test(action.mode || "")
           ? 2.1
           : closeCombatTarget ? 1.8 : priorityTarget ? 1.45 : /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear)$/.test(action.mode || "") ? 1.25 : 0.35;
       }
@@ -3186,12 +3220,12 @@
       if (action.target) {
         if (action.target === lastTarget) {
           targetAge += dt;
-          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "freeze-assault-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear") ? 0 : targetWorkAge + dt;
+          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "freeze-assault-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear" || action.mode === "spawn-assault-clear") ? 0 : targetWorkAge + dt;
         } else {
           targetAge = 0;
           targetWorkAge = 0;
         }
-        if (!targetChanged && /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear)$/.test(action.mode || "")) {
+        if (!targetChanged && /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear|spawn-assault|spawn-assault-fire|spawn-assault-clear)$/.test(action.mode || "")) {
           targetLock = Math.max(targetLock, baseThreatScore(ctx, action.target) > 16 ? 1.05 : 0.65);
         }
         lastTarget = action.target;
@@ -3259,6 +3293,7 @@
       const intruder = baseIntruder(ctx, name);
       const anchorThreat = baseAnchorThreat(ctx);
       const laneThreat = baseFireLaneThreat(ctx);
+      const spawnEnemy = spawnThreat(ctx, tank, name);
       const killThreat = ctx.adaptive.killConfirm ? (intruder || laneThreat || killConfirmThreat(ctx, tank, name)) : null;
       const endgameThreat = !scan.baseTarget && !intruder ? endgameStalledThreat(ctx, tank, name) : null;
       const midlineThreat = !intruder && !anchorThreat && !laneThreat ? midlineBreachThreat(ctx) : null;
@@ -3465,6 +3500,33 @@
         return commit(ctx, { dir, fire: false, hold: false, mode: "endgame-hunt", target: endgameThreat }, dt);
       }
 
+      if (spawnEnemy) {
+        const shot = safeShotDir(ctx, tank, spawnEnemy) || shotDir(ctx, tank, spawnEnemy);
+        if (shot && ctx.canFire?.() && scan.bulletRisk < 9.5) {
+          lastMode = "spawn-assault-fire";
+          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "spawn-assault-fire", target: spawnEnemy }, dt);
+        }
+        const lineClear = attackLineClearDir(ctx, tank, spawnEnemy, true);
+        if (lineClear && ctx.canFire?.()) {
+          lastMode = "spawn-assault-clear";
+          return commit(ctx, { dir: lineClear, fire: true, hold: true, mode: "spawn-assault-clear", target: spawnEnemy }, dt);
+        }
+        const goals = [
+          ...spawnAssaultGoals(ctx, tank, spawnEnemy, name),
+          ...shootingPositionGoals(ctx, tank, spawnEnemy, name),
+          ...attackGoals(ctx, spawnEnemy).slice(0, 12),
+          ...approachGoals(ctx, spawnEnemy).slice(0, 14),
+          ...interceptGoals(ctx, spawnEnemy, name).slice(0, 8),
+        ];
+        const dir = routeDir(ctx, tank, goals, spawnEnemy, "attack");
+        lastMode = "spawn-assault";
+        if (ctx.routeNeedsClear && ctx.canFire?.()) {
+          lastMode = "spawn-assault-clear";
+          return commit(ctx, { dir, fire: true, hold: true, mode: "spawn-assault-clear", target: spawnEnemy }, dt);
+        }
+        return commit(ctx, { dir, fire: false, hold: false, mode: "spawn-assault", target: spawnEnemy }, dt);
+      }
+
       if (hasPatch(ctx, "base_lockdown") && (scan.baseTarget || intruder)) {
         const threat = scan.baseTarget || intruder;
         const shot = panicShotDir(ctx, tank, threat) || (baseDangerClose(ctx, threat) ? safeShotDir(ctx, tank, threat) : shotDir(ctx, tank, threat));
@@ -3528,31 +3590,6 @@
           return commit(ctx, { dir, fire: true, hold: true, mode: "base-intruder-clear", target: intruder }, dt);
         }
         return commit(ctx, { dir, fire: false, hold: false, mode: "base-intruder-assault", target: intruder }, dt);
-      }
-
-      const spawnEnemy = spawnThreat(ctx, tank, name);
-      if (spawnEnemy) {
-        const shot = shotDir(ctx, tank, spawnEnemy);
-        if (shot && ctx.canFire?.()) {
-          lastMode = "spawn-defense-fire";
-          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "spawn-defense-fire", target: spawnEnemy }, dt);
-        }
-        const lineClear = attackLineClearDir(ctx, tank, spawnEnemy, true);
-        if (lineClear && ctx.canFire?.()) {
-          lastMode = "spawn-defense-clear";
-          return commit(ctx, { dir: lineClear, fire: true, hold: true, mode: "spawn-defense-clear", target: spawnEnemy }, dt);
-        }
-        const attack = [...shootingPositionGoals(ctx, tank, spawnEnemy, name), ...attackGoals(ctx, spawnEnemy)];
-        const approach = approachGoals(ctx, spawnEnemy);
-        const intercept = interceptGoals(ctx, spawnEnemy, name);
-        const home = spawnPoint(ctx, name);
-        const dir = routeDir(ctx, tank, [...attack, ...approach, ...intercept, home], spawnEnemy, "attack");
-        lastMode = "spawn-defense";
-        if (ctx.routeNeedsClear && ctx.canFire?.()) {
-          lastMode = "spawn-defense-clear";
-          return commit(ctx, { dir, fire: true, hold: true, mode: "spawn-defense-clear", target: spawnEnemy }, dt);
-        }
-        return commit(ctx, { dir, fire: false, hold: false, mode: "spawn-defense", target: spawnEnemy }, dt);
       }
 
       const immediateShot = scan.baseShot || scan.enemyShot;
