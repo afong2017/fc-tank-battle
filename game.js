@@ -2313,8 +2313,7 @@ function attackTargetFor(tank, reservedTargets = []) {
     })
     .sort((a, b) => b.score - a.score);
   if (!ranked.length) return null;
-  if (ranked.length === 1) return ranked[0].enemy;
-  return ranked.find((item) => !reservedTargets.some((target) => target?.alive && target === item.enemy))?.enemy || ranked[0].enemy;
+  return ranked[0].enemy;
 }
 
 function isBaseLockThreat(enemy) {
@@ -2420,7 +2419,7 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
     const effectiveReservedTargets = reservedTargets;
     const context = aiContext(tank, effectiveReservedTargets, ai.memory?.weights || null);
     action = ai.decide(context, dt);
-    const actionTarget = action.target?.alive && allyEligibleSideTarget(tank, action.target) && !(enemies.length > 1 && targetReserved(action.target, reservedTargets)) ? action.target : null;
+    const actionTarget = action.target?.alive && allyEligibleSideTarget(tank, action.target) ? action.target : null;
     tank.attackTarget = tank.lockedBaseTarget || actionTarget || attackTargetFor(tank, effectiveReservedTargets);
     const attackRouteAction = actionTarget?.alive && actionTarget.enemy && isAttackRouteMode(action.mode);
     tank.attackRoute = attackRouteAction ? (context.plannedRoute || null) : null;
@@ -2793,7 +2792,7 @@ function drawTargetLink(tank, color, reservedTargets = []) {
 
 function drawTargetLinks() {
   const p1Target = drawTargetLink(player, "rgba(255, 232, 96, 0.9)");
-  drawTargetLink(player2, "rgba(92, 215, 255, 0.9)", [p1Target]);
+  drawTargetLink(player2, "rgba(92, 215, 255, 0.9)");
 }
 
 function drawFreezeBonus(b) {

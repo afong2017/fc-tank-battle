@@ -1534,23 +1534,11 @@
       .filter((enemy) => visibleEnemy(ctx, enemy))
       .map((enemy) => {
         const baseDistance = dist(enemy, ctx.base);
-        const approachRoute = enemyBaseRoute(ctx, enemy);
-        const routeScore = Number.isFinite(approachRoute.distance) ? approachRoute.distance * TILE : baseDistance + TILE * 10;
-        const lane = Math.abs(centerX(enemy) - centerX(ctx.base));
-        let eta = Math.min(baseDistance, routeScore);
-        if (enemy.dir === "down" && centerY(enemy) < centerY(ctx.base)) eta -= TILE * 5;
-        if (lane < TILE * 4.5) eta -= TILE * 4;
-        if (centerY(enemy) > (ctx.rows || 24) * TILE * 0.5) eta -= TILE * 3;
-        eta -= baseThreatScore(ctx, enemy) * 5.5;
-        return { enemy, eta };
+        return { enemy, baseDistance };
       })
-      .sort((a, b) => a.eta - b.eta)
+      .sort((a, b) => a.baseDistance - b.baseDistance)
       .map((item) => item.enemy);
-    if (visible.length <= 1) return visible[0] || null;
-    return visible
-      .find((enemy) => !reservedTarget(ctx, enemy))
-      || visible[0]
-      || null;
+    return visible[0] || null;
   }
 
   function nearestBaseEnemy(ctx) {
@@ -3484,6 +3472,25 @@
         lastMode = emergencyDodge.mode;
         return commit(ctx, emergencyDodge, dt);
       }
+      if (baseNearestTarget) {
+        const shot = safeShotDir(ctx, tank, baseNearestTarget) || shotDir(ctx, tank, baseNearestTarget);
+        const closeAssault = dist(tank, baseNearestTarget) < TILE * 8.5;
+        if (shot && ctx.canFire?.() && scan.bulletRisk < (closeAssault ? 12.5 : 8.8)) {
+          lastMode = "base-nearest-hunt-fire";
+          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "base-nearest-hunt-fire", target: baseNearestTarget }, dt);
+        }
+        ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
+        const goals = [
+          ...routeInterceptGoals(ctx, tank, baseNearestTarget, name),
+          ...approachGoals(ctx, baseNearestTarget),
+          ...shootingPositionGoals(ctx, tank, baseNearestTarget, name),
+          ...attackGoals(ctx, baseNearestTarget),
+          ...interceptGoals(ctx, baseNearestTarget, name).slice(0, 12),
+        ];
+        const dir = routeDir(ctx, tank, goals, baseNearestTarget, "attack");
+        lastMode = "base-nearest-hunt";
+        return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
+      }
       if (closeFreeze && scan.bulletRisk < 7.5) {
         const dir = routeDir(ctx, tank, [closeFreeze], closeFreeze, "bonus");
         lastMode = "near-freeze";
@@ -3580,26 +3587,6 @@
           return commit(ctx, { dir, fire: true, hold: true, mode: "chase-break-clear", target: chaseTarget }, dt);
         }
         return commit(ctx, { dir, fire: false, hold: false, mode: "chase-break", target: chaseTarget }, dt);
-      }
-
-      if (baseNearestTarget) {
-        const shot = safeShotDir(ctx, tank, baseNearestTarget) || shotDir(ctx, tank, baseNearestTarget);
-        const closeAssault = dist(tank, baseNearestTarget) < TILE * 8.5;
-        if (shot && ctx.canFire?.() && scan.bulletRisk < (closeAssault ? 12.5 : 8.8)) {
-          lastMode = "base-nearest-hunt-fire";
-          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "base-nearest-hunt-fire", target: baseNearestTarget }, dt);
-        }
-        ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
-        const goals = [
-          ...routeInterceptGoals(ctx, tank, baseNearestTarget, name),
-          ...approachGoals(ctx, baseNearestTarget),
-          ...shootingPositionGoals(ctx, tank, baseNearestTarget, name),
-          ...attackGoals(ctx, baseNearestTarget),
-          ...interceptGoals(ctx, baseNearestTarget, name).slice(0, 12),
-        ];
-        const dir = routeDir(ctx, tank, goals, baseNearestTarget, "attack");
-        lastMode = "base-nearest-hunt";
-        return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
       }
 
       if (ctx.aggressiveOnly) {
