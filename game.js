@@ -2271,8 +2271,7 @@ function allyCanCrossSide(tank) {
 }
 
 function allyEligibleSideTarget(tank, enemy) {
-  if (freezeClock > 0.05) return visibleEnemyForAlly(enemy);
-  return visibleEnemyForAlly(enemy) && (allyOwnSide(tank, enemy) || allyCanCrossSide(tank));
+  return visibleEnemyForAlly(enemy);
 }
 
 function attackTargetFor(tank, reservedTargets = []) {

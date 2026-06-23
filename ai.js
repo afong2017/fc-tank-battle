@@ -1409,11 +1409,7 @@
   }
 
   function eligibleSideTarget(ctx, enemy, name) {
-    if (!visibleEnemy(ctx, enemy)) return false;
-    if ((ctx.freezeTime || 0) > 0.05) return true;
-    if (criticalBaseThreat(ctx, enemy)) return true;
-    if ((ctx.enemies || []).filter((item) => visibleEnemy(ctx, item)).length < 3) return true;
-    return ownSide(ctx, enemy, name) || canCrossToHelp(ctx, name);
+    return visibleEnemy(ctx, enemy);
   }
 
   function baseThreats(ctx) {
