@@ -2741,7 +2741,7 @@ function appendTargetConnector(points, targetPoint) {
 }
 
 function isAttackRouteMode(mode = "") {
-  return /^(attack|attack-clear|long-range-fire|forward-intercept|forward-intercept-fire|forward-intercept-clear|freeze-assault|freeze-assault-fire|freeze-assault-clear|base-assault|base-assault-clear|base-anchor|base-anchor-fire|base-anchor-clear|close-melee|close-melee-fire|close-melee-duel|close-melee-dodge|close-melee-clear|kill-confirm|kill-confirm-fire|kill-confirm-clear|base-lane-block|base-lane-fire|base-lane-clear|base-intruder|base-intruder-fire|base-intruder-clear|base-intruder-assault|patch-base-lockdown|patch-base-lockdown-fire|patch-base-lockdown-clear)$/.test(mode || "");
+  return /^(attack|attack-clear|long-range-fire|forward-intercept|forward-intercept-fire|forward-intercept-clear|freeze-assault|freeze-assault-fire|freeze-assault-clear|base-nearest-hunt|base-nearest-hunt-fire|base-nearest-hunt-clear|chase-break|chase-break-fire|chase-break-clear|target-execute|target-execute-fire|target-execute-clear|base-assault|base-assault-clear|base-anchor|base-anchor-fire|base-anchor-clear|close-melee|close-melee-fire|close-melee-duel|close-melee-dodge|close-melee-clear|kill-confirm|kill-confirm-fire|kill-confirm-clear|base-lane-block|base-lane-fire|base-lane-clear|base-intruder|base-intruder-fire|base-intruder-clear|base-intruder-assault|patch-base-lockdown|patch-base-lockdown-fire|patch-base-lockdown-clear)$/.test(mode || "");
 }
 
 function drawTargetLink(tank, color, reservedTargets = []) {
@@ -2751,8 +2751,8 @@ function drawTargetLink(tank, color, reservedTargets = []) {
     : null);
   const target = lockedTarget || currentTarget;
   if (!tank?.alive || !visibleEnemyForAlly(target)) return;
-  if (tank.attackRouteTarget !== target) return target;
-  if (!isAttackRouteMode(tank.attackRouteMode)) return target;
+  if (tank.attackRouteTarget && tank.attackRouteTarget !== target) return target;
+  if (tank.attackRouteMode && !isAttackRouteMode(tank.attackRouteMode)) return target;
   const route = tank.attackRoute?.length ? tank.attackRoute : [];
   const a = centerOf(tank);
   const b = centerOf(target);
