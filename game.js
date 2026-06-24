@@ -2425,9 +2425,9 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
     const effectiveReservedTargets = reservedTargets;
     const context = aiContext(tank, effectiveReservedTargets, ai.memory?.weights || null);
     action = ai.decide(context, dt);
-    const actionTarget = action.target?.alive && allyEligibleSideTarget(tank, action.target) && !(enemies.length > 1 && targetReserved(action.target, reservedTargets)) ? action.target : null;
-    tank.attackTarget = tank.lockedBaseTarget || actionTarget || attackTargetFor(tank, effectiveReservedTargets);
-    const attackRouteAction = actionTarget?.alive && actionTarget.enemy && isAttackRouteMode(action.mode);
+    const actionTarget = action.target?.alive && allyEligibleSideTarget(tank, action.target) ? action.target : null;
+    tank.attackTarget = tank.lockedBaseTarget || actionTarget || attackTargetFor(tank, []);
+    const attackRouteAction = actionTarget?.alive && isAttackRouteMode(action.mode);
     tank.attackRoute = attackRouteAction ? (context.plannedRoute || null) : null;
     tank.attackRouteTarget = attackRouteAction ? actionTarget : null;
     tank.attackRouteMode = attackRouteAction ? action.mode : null;
@@ -2750,14 +2750,12 @@ function isAttackRouteMode(mode = "") {
 
 function drawTargetLink(tank, color, reservedTargets = []) {
   const lockedTarget = visibleEnemyForAlly(tank?.lockedBaseTarget) ? tank.lockedBaseTarget : null;
-  const currentTarget = lockedTarget || (visibleEnemyForAlly(tank?.attackTarget) && !(enemies.length > 1 && targetReserved(tank.attackTarget, reservedTargets))
-    ? tank.attackTarget
-    : null);
-  const target = lockedTarget || currentTarget;
+  const currentTarget = visibleEnemyForAlly(tank?.attackTarget) ? tank.attackTarget : null;
+  const target = lockedTarget || currentTarget || attackTargetFor(tank, []);
   if (!tank?.alive || !visibleEnemyForAlly(target)) return;
-  if (tank.attackRouteTarget !== target) return target;
-  if (!isAttackRouteMode(tank.attackRouteMode)) return target;
-  const route = tank.attackRoute?.length ? tank.attackRoute : [];
+  const route = tank.attackRouteTarget === target && isAttackRouteMode(tank.attackRouteMode) && tank.attackRoute?.length
+    ? tank.attackRoute
+    : [];
   const a = centerOf(tank);
   const b = centerOf(target);
   const points = [{ x: a.x, y: a.y }];
@@ -2767,6 +2765,12 @@ function drawTargetLink(tank, color, reservedTargets = []) {
     points.push({ x: point.x, y: point.y });
   }
   appendTargetConnector(points, b);
+  if (points.length < 2) {
+    const horizontalFirst = Math.abs(b.x - a.x) > Math.abs(b.y - a.y);
+    const corner = horizontalFirst ? { x: b.x, y: a.y } : { x: a.x, y: b.y };
+    if (!lineBlockedBySteel(a, corner) && !lineBlockedBySteel(corner, b)) points.push(corner, b);
+    else if (!lineBlockedBySteel(a, b)) points.push(b);
+  }
   if (points.length < 2) return target;
   ctx.save();
   ctx.globalAlpha = 0.8;

@@ -1532,16 +1532,10 @@
   }
 
   function baseApproachTarget(ctx) {
-    const visible = (ctx.enemies || [])
+    return (ctx.enemies || [])
       .filter((enemy) => visibleEnemy(ctx, enemy))
-      .map((enemy) => {
-        const baseDistance = dist(enemy, ctx.base);
-        return { enemy, baseDistance };
-      })
-      .sort((a, b) => a.baseDistance - b.baseDistance)
-      .map((item) => item.enemy);
-    if (visible.length <= 1) return visible[0] || null;
-    return visible.find((enemy) => !reservedTarget(ctx, enemy) || dist(ctx.tank, enemy) < TILE * 5.4) || visible[0] || null;
+      .map((enemy) => ({ enemy, baseDistance: dist(enemy, ctx.base) }))
+      .sort((a, b) => a.baseDistance - b.baseDistance)[0]?.enemy || null;
   }
 
   function nearestBaseEnemy(ctx) {
