@@ -3454,12 +3454,18 @@
       ctx.disableBrickClear = false;
       ctx.chaseBrickClearOnly = true;
       ctx.aggressiveOnly = true;
+      const nearbyEnemySignature = (ctx.enemies || [])
+        .filter((enemy) => enemy?.alive && visibleEnemy(ctx, enemy) && dist(enemy, ctx.tank) < TILE * 6.2)
+        .map((enemy) => `${Math.round(centerX(enemy) / 16)},${Math.round(centerY(enemy) / 16)}`)
+        .sort()
+        .join(";");
       const urgentKey = [
         Math.round((ctx.tank?.x || 0) / 16),
         Math.round((ctx.tank?.y || 0) / 16),
         Math.round((ctx.base?.x || 0) / 32),
         Math.round((ctx.base?.y || 0) / 32),
         (ctx.enemies || []).filter((enemy) => enemy?.alive && dist(enemy, ctx.base) < TILE * 10).length,
+        nearbyEnemySignature,
         (ctx.bullets || []).filter((bullet) => bullet?.enemy && dist(bullet, ctx.tank) < TILE * 6).length,
         (ctx.bonuses || []).filter((bonus) => bonus.type === "freeze" && !bonus.dead && bonus.ttl > 0 && dist(ctx.tank, bonus) <= TILE * 5.8).length,
         ctx.mapVersion || 0,
@@ -3518,10 +3524,17 @@
         lastMode = emergencyDodge.mode;
         return commit(ctx, emergencyDodge, dt);
       }
+
       if (closeFreeze && scan.bulletRisk < 7.5) {
         const dir = routeDir(ctx, tank, [closeFreeze], closeFreeze, "bonus");
         lastMode = "near-freeze";
         return commit(ctx, { dir, fire: false, hold: false, mode: "near-freeze" }, dt);
+      }
+      const immediateMeleeTarget = scan.closeCombatTarget || (anchorThreat && dist(tank, anchorThreat) < TILE * 8.6 ? anchorThreat : null);
+      const immediateMeleeAction = closeCombatAction(ctx, tank, immediateMeleeTarget, name);
+      if (immediateMeleeAction) {
+        lastMode = immediateMeleeAction.mode;
+        return commit(ctx, immediateMeleeAction, dt);
       }
       if (baseNearestTarget) {
         const shot = safeShotDir(ctx, tank, baseNearestTarget) || shotDir(ctx, tank, baseNearestTarget);
@@ -3668,12 +3681,6 @@
           return commit(ctx, { dir, fire: true, hold: true, mode: "auto-midline-clear", target: midlineThreat }, dt);
         }
         return commit(ctx, { dir, fire: false, hold: false, mode: "auto-midline", target: midlineThreat }, dt);
-      }
-      const meleeTarget = scan.closeCombatTarget || (anchorThreat && dist(tank, anchorThreat) < TILE * 8.6 ? anchorThreat : null);
-      const meleeAction = closeCombatAction(ctx, tank, meleeTarget, name);
-      if (meleeAction) {
-        lastMode = meleeAction.mode;
-        return commit(ctx, meleeAction, dt);
       }
 
       if (urgentFreeze) {

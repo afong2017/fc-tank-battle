@@ -2426,7 +2426,7 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
     const context = aiContext(tank, effectiveReservedTargets, ai.memory?.weights || null);
     action = ai.decide(context, dt);
     const actionTarget = action.target?.alive && allyEligibleSideTarget(tank, action.target) ? action.target : null;
-    tank.attackTarget = tank.lockedBaseTarget || actionTarget || attackTargetFor(tank, []);
+    tank.attackTarget = actionTarget || tank.lockedBaseTarget || attackTargetFor(tank, []);
     const attackRouteAction = actionTarget?.alive && isAttackRouteMode(action.mode);
     tank.attackRoute = attackRouteAction ? (context.plannedRoute || null) : null;
     tank.attackRouteTarget = attackRouteAction ? actionTarget : null;
