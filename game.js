@@ -2426,7 +2426,7 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
     const context = aiContext(tank, effectiveReservedTargets, ai.memory?.weights || null);
     action = ai.decide(context, dt);
     const actionTarget = action.target?.alive && allyEligibleSideTarget(tank, action.target) ? action.target : null;
-    tank.attackTarget = actionTarget || tank.lockedBaseTarget || attackTargetFor(tank, []);
+    tank.attackTarget = actionTarget || tank.lockedBaseTarget || attackTargetFor(tank, effectiveReservedTargets);
     const attackRouteAction = actionTarget?.alive && isAttackRouteMode(action.mode);
     tank.attackRoute = attackRouteAction ? (context.plannedRoute || null) : null;
     tank.attackRouteTarget = attackRouteAction ? actionTarget : null;
@@ -2751,7 +2751,7 @@ function isAttackRouteMode(mode = "") {
 function drawTargetLink(tank, color, reservedTargets = []) {
   const lockedTarget = visibleEnemyForAlly(tank?.lockedBaseTarget) ? tank.lockedBaseTarget : null;
   const currentTarget = visibleEnemyForAlly(tank?.attackTarget) ? tank.attackTarget : null;
-  const target = lockedTarget || currentTarget || attackTargetFor(tank, []);
+  const target = currentTarget || lockedTarget || attackTargetFor(tank, reservedTargets);
   if (!tank?.alive || !visibleEnemyForAlly(target)) return;
   const route = tank.attackRouteTarget === target && isAttackRouteMode(tank.attackRouteMode) && tank.attackRoute?.length
     ? tank.attackRoute

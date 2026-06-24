@@ -1531,11 +1531,18 @@
     return best;
   }
 
+  function canShareTarget(ctx, enemy, tank = ctx.tank) {
+    if (!visibleEnemy(ctx, enemy)) return false;
+    return criticalBaseThreat(ctx, enemy) || dist(enemy, ctx.base) < TILE * 7.2 || dist(enemy, tank) < TILE * 2.8;
+  }
+
   function baseApproachTarget(ctx) {
-    return (ctx.enemies || [])
+    const ranked = (ctx.enemies || [])
       .filter((enemy) => visibleEnemy(ctx, enemy))
       .map((enemy) => ({ enemy, baseDistance: dist(enemy, ctx.base) }))
-      .sort((a, b) => a.baseDistance - b.baseDistance)[0]?.enemy || null;
+      .sort((a, b) => a.baseDistance - b.baseDistance);
+    if (!ranked.length) return null;
+    return ranked.find((item) => !reservedTarget(ctx, item.enemy) || canShareTarget(ctx, item.enemy))?.enemy || ranked[0].enemy;
   }
 
   function nearestBaseEnemy(ctx) {
@@ -1546,6 +1553,7 @@
     return ctx.enemies
       .filter((enemy) => {
         if (!visibleEnemy(ctx, enemy) || !eligibleSideTarget(ctx, enemy, name)) return false;
+        if (ctx.enemies.length > 1 && reservedTarget(ctx, enemy) && !canShareTarget(ctx, enemy, tank)) return false;
         const personalRange = dist(tank, enemy) < TILE * 5.4;
         const baseMeleeRange = dist(tank, enemy) < TILE * 8.2 && dist(enemy, ctx.base) < TILE * 9.5 && centerY(enemy) > centerY(ctx.base) - TILE * 9;
         return personalRange || baseMeleeRange;
@@ -2048,6 +2056,7 @@
     return (ctx.enemies || [])
       .filter((enemy) => {
         if (!visibleEnemy(ctx, enemy) || !eligibleSideTarget(ctx, enemy, name)) return false;
+        if (ctx.enemies.length > 1 && reservedTarget(ctx, enemy) && !canShareTarget(ctx, enemy, tank)) return false;
         const y = centerY(enemy);
         if (y < fieldHeight * 0.32 || y >= midline + TILE * 2.5) return false;
         const lanePressure = Math.abs(centerX(enemy) - baseX) < TILE * 11;
@@ -2117,6 +2126,7 @@
     return ctx.enemies
       .filter((enemy) => {
         if (!visibleEnemy(ctx, enemy) || !eligibleSideTarget(ctx, enemy, name)) return false;
+        if (ctx.enemies.length > 1 && reservedTarget(ctx, enemy) && !canShareTarget(ctx, enemy, tank)) return false;
         const nearOwnSpawn = dist(enemy, spawn) < TILE * 8.5;
         const lowerOwnSide = centerY(enemy) > lowerLine && ownSide(ctx, enemy, name);
         const nearTankAndSpawn = dist(enemy, tank) < TILE * 10 && dist(tank, spawn) < TILE * 11;
