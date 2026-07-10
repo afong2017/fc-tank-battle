@@ -78,6 +78,14 @@
     clearAggression: { value: 0.5, score: 0, trials: 0 },
     targetPatience: { value: 0.45, score: 0, trials: 0 },
   };
+  const STRATEGY_GENE_FLOORS = /** @type {Record<string, number>} */ ({
+    killConfirm: 0.45,
+    laneBlock: 0.48,
+    panicGuard: 0.5,
+    dodgeDiscipline: 0.5,
+    clearAggression: 0.3,
+    targetPatience: 0.38,
+  });
   const FAILURE_TO_WEIGHT = {
     base_hit: { defend: 0.16, attack: 0.05 },
     enemy_cross_midline: { defend: 0.08, attack: 0.04 },
@@ -214,10 +222,13 @@
   function normalizeEvolution(saved = {}) {
     const genes = {};
     const source = saved?.genes || {};
+    const rawValues = {};
     for (const [name, defaults] of Object.entries(DEFAULT_STRATEGY_GENES)) {
       const gene = source[name] || {};
+      const rawValue = Number.isFinite(Number(gene.value)) ? Number(gene.value) : defaults.value;
+      rawValues[name] = rawValue;
       genes[name] = {
-        value: clamp(Number.isFinite(Number(gene.value)) ? Number(gene.value) : defaults.value, 0, 1),
+        value: clamp(rawValue, STRATEGY_GENE_FLOORS[name] ?? 0.12, 0.96),
         score: Number.isFinite(Number(gene.score)) ? Number(gene.score) : defaults.score,
         trials: Math.max(0, Math.floor(Number(gene.trials) || 0)),
       };
@@ -228,12 +239,17 @@
       && geneValues.every((gene) => gene.score < -1.5 || gene.trials > 40);
     const collapsed = geneValues.filter((gene) => gene.value <= 0.13).length >= Object.keys(genes).length - 1
       && geneValues.every((gene) => gene.score < -1.5 && gene.trials > 40);
-    if (saturated || collapsed) {
+    const strategicallyDegraded = Object.entries(genes).filter(([name, gene]) =>
+      rawValues[name] <= (STRATEGY_GENE_FLOORS[name] ?? 0.12) + 0.02
+      && gene.score < -1.5
+      && gene.trials > 40
+    ).length >= 4;
+    if (saturated || collapsed || strategicallyDegraded) {
       for (const [name, defaults] of Object.entries(DEFAULT_STRATEGY_GENES)) {
-        genes[name].value = collapsed
-          ? defaults.value
+        genes[name].value = collapsed || strategicallyDegraded
+          ? Math.max(STRATEGY_GENE_FLOORS[name] ?? 0.12, defaults.value * 0.92)
           : clamp((genes[name].value + defaults.value) / 2, 0.12, 0.96);
-        genes[name].score *= 0.25;
+        genes[name].score *= strategicallyDegraded ? 0.18 : 0.25;
       }
     }
     return {
@@ -951,16 +967,16 @@
       gene.trials += 1;
       const direction = reward > 0.15 ? 1 : reward < -0.45 ? -1 : 0;
       const mutation = direction * (0.012 + Math.min(0.03, Math.abs(reward) * 0.006));
-      gene.value = clamp(gene.value + mutation, 0.12, 0.96);
+      gene.value = clamp(gene.value + mutation, STRATEGY_GENE_FLOORS[name] ?? 0.12, 0.96);
     }
     if (baseHits > 0 && kills < 8) {
-      genes.killConfirm.value = clamp(genes.killConfirm.value + (killConfirmRatio >= 0.2 ? 0.025 : -0.07), 0.12, 0.96);
-      genes.panicGuard.value = clamp(genes.panicGuard.value + (deaths <= 1 ? 0.02 : -0.025), 0.12, 0.96);
-      genes.laneBlock.value = clamp(genes.laneBlock.value - (laneRatio < 0.25 ? 0.07 : 0.02), 0.12, 0.96);
+      genes.killConfirm.value = clamp(genes.killConfirm.value + (killConfirmRatio >= 0.2 ? 0.025 : 0.04), STRATEGY_GENE_FLOORS.killConfirm, 0.96);
+      genes.panicGuard.value = clamp(genes.panicGuard.value + (deaths <= 1 ? 0.025 : 0.012), STRATEGY_GENE_FLOORS.panicGuard, 0.96);
+      genes.laneBlock.value = clamp(genes.laneBlock.value + (laneRatio < 0.25 ? 0.055 : 0.025), STRATEGY_GENE_FLOORS.laneBlock, 0.96);
     }
     if (stuck + stale > 6) {
-      genes.clearAggression.value = clamp(genes.clearAggression.value + ((counters.route_clear_failed || 0) > 0 ? 0.025 : -0.02), 0.12, 0.96);
-      genes.targetPatience.value = clamp(genes.targetPatience.value - 0.08, 0.12, 0.96);
+      genes.clearAggression.value = clamp(genes.clearAggression.value + ((counters.route_clear_failed || 0) > 0 ? 0.025 : -0.02), STRATEGY_GENE_FLOORS.clearAggression, 0.96);
+      genes.targetPatience.value = clamp(genes.targetPatience.value - 0.08, STRATEGY_GENE_FLOORS.targetPatience, 0.96);
     }
     const active = Object.entries(genes).sort((a, b) => b[1].value + b[1].score * 0.05 - (a[1].value + a[1].score * 0.05))[0]?.[0] || "base";
     memory.evolution.active = active;
@@ -3704,7 +3720,7 @@
       if (action.target) {
         if (action.target === lastTarget) {
           targetAge += dt;
-          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "freeze-assault-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear" || action.mode === "spawn-assault-clear" || action.mode === "target-execute-clear" || action.mode === "chase-break-clear" || action.mode === "base-nearest-hunt-clear") ? 0 : targetWorkAge + dt;
+          targetWorkAge = (action.fire || action.mode === "route-clear" || action.mode === "freeze-assault-clear" || action.mode === "auto-midline-clear" || action.mode === "hard-midline-clear" || action.mode === "base-lane-clear" || action.mode === "early-midline-clear" || action.mode === "attack-clear" || action.mode === "intercept-clear" || action.mode === "early-defend-clear" || action.mode === "base-assault-clear" || action.mode === "spawn-assault-clear" || action.mode === "target-execute-clear" || action.mode === "chase-break-clear" || action.mode === "base-nearest-hunt-clear") ? 0 : targetWorkAge + dt;
           const nowDistance = dist(ctx.tank, action.target);
           const makingProgress = nowDistance < lastTargetDistance - TILE * 0.18 || action.fire || action.mode?.includes("clear");
           targetNoProgressAge = makingProgress ? 0 : targetNoProgressAge + dt;
@@ -3715,7 +3731,7 @@
           targetNoProgressAge = 0;
           lastTargetDistance = dist(ctx.tank, action.target);
         }
-        if (!targetChanged && /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear|spawn-assault|spawn-assault-fire|spawn-assault-clear|target-execute|target-execute-fire|target-execute-clear|chase-break|chase-break-fire|chase-break-clear|base-nearest-hunt|base-nearest-hunt-fire|base-nearest-hunt-clear)$/.test(action.mode || "")) {
+        if (!targetChanged && /^(long-range-fire|freeze-assault|freeze-assault-fire|freeze-assault-clear|auto-midline|auto-midline-fire|auto-midline-clear|hard-midline|hard-midline-fire|hard-midline-clear|base-lane-fire|base-lane-clear|base-lane-intercept|early-midline-fire|early-midline-clear|early-midline-intercept|forward-intercept|forward-intercept-fire|forward-intercept-clear|attack|attack-clear|intercept|intercept-clear|base-assault|base-assault-clear|defend|defend-clear|base-intruder-fire|base-intruder-clear|base-intruder-assault|spawn-defense|spawn-defense-fire|spawn-defense-clear|spawn-assault|spawn-assault-fire|spawn-assault-clear|target-execute|target-execute-fire|target-execute-clear|chase-break|chase-break-fire|chase-break-clear|base-nearest-hunt|base-nearest-hunt-fire|base-nearest-hunt-clear)$/.test(action.mode || "")) {
           targetLock = Math.max(targetLock, baseThreatScore(ctx, action.target) > 16 ? 1.05 : 0.65);
         }
         lastTarget = action.target;
@@ -3747,6 +3763,54 @@
         return { dir, fire: false, hold: false, mode: "emergency-dodge", target };
       }
       return { dir: null, fire: false, hold: true, mode: "emergency-dodge-hold", target };
+    }
+
+    function urgentInterceptAction(ctx, tank, laneThreat, midlineThreat, scan) {
+      const fieldHeight = (ctx.rows || 24) * TILE;
+      const midline = fieldHeight * 0.5;
+      const stageThreeCenterThreat = Number(ctx.stage) === 3
+        && midlineThreat
+        && centerY(midlineThreat) >= midline - TILE * 5.5
+        && Math.abs(centerX(midlineThreat) - centerX(ctx.base)) <= TILE * 6.5;
+      const earlyBreach = midlineThreat
+        && centerY(midlineThreat) >= midline - TILE * (
+          2.5
+          + (ctx.adaptive.midlineTriggerOffset || 0) * 0.45
+          + (ctx.adaptive.laneBlockBias || 0) * 1.5
+        );
+      const criticalMidline = midlineThreat
+        && (earlyBreach || stageThreeCenterThreat || baseThreatScore(ctx, midlineThreat) > 14);
+      const target = laneThreat || (criticalMidline ? midlineThreat : null);
+      if (!target) return null;
+      const directBaseLane = target === laneThreat;
+      if (!directBaseLane
+        && (ctx.enemies || []).length > 1
+        && reservedTarget(ctx, target)
+        && !canShareTarget(ctx, target, tank)) return null;
+
+      const prefix = directBaseLane ? "base-lane" : "early-midline";
+      const shot = (directBaseLane ? panicShotDir(ctx, tank, target) : null)
+        || safeShotDir(ctx, tank, target)
+        || shotDir(ctx, tank, target);
+      if (shot && ctx.canFire?.() && scan.bulletRisk < (directBaseLane ? 13.5 : 9.5)) {
+        return { dir: shot, fire: true, hold: true, mode: `${prefix}-fire`, target };
+      }
+      const lineClear = attackLineClearDir(ctx, tank, target, true);
+      if (lineClear && ctx.canFire?.()) {
+        return { dir: lineClear, fire: true, hold: true, mode: `${prefix}-clear`, target };
+      }
+      const goals = [
+        ...tacticalMemoryGoals(ctx, target, name),
+        ...shootingPositionGoals(ctx, tank, target, name),
+        ...(directBaseLane ? baseFireLaneGoals(ctx, target, name) : interceptGoals(ctx, target, name)),
+        ...basePanicGoals(ctx, target, name),
+        ...attackGoals(ctx, target),
+      ];
+      const dir = routeDir(ctx, tank, goals, target, "intercept") || directionTo(tank, target);
+      if (ctx.routeNeedsClear && ctx.canFire?.()) {
+        return { dir, fire: true, hold: true, mode: `${prefix}-clear`, target };
+      }
+      return { dir, fire: false, hold: false, mode: `${prefix}-intercept`, target };
     }
 
     function committedThreatTarget(ctx, scan) {
@@ -3941,6 +4005,11 @@
       if (immediateMeleeAction) {
         lastMode = immediateMeleeAction.mode;
         return commit(ctx, immediateMeleeAction, dt);
+      }
+      const urgentIntercept = urgentInterceptAction(ctx, tank, laneThreat, midlineThreat, scan);
+      if (urgentIntercept) {
+        lastMode = urgentIntercept.mode;
+        return commit(ctx, urgentIntercept, dt);
       }
       const immediateAttack = attackOpportunityAction(ctx, tank, baseNearestTarget, name);
       if (immediateAttack) {
