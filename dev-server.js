@@ -162,7 +162,7 @@ async function requestGeminiCoach(snapshot) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw Object.assign(new Error("GEMINI_API_KEY is not configured"), { statusCode: 503 });
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3500);
+  const timer = setTimeout(() => controller.abort(), 10000);
   try {
     const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
       method: "POST",
@@ -186,7 +186,11 @@ async function requestGeminiCoach(snapshot) {
       throw Object.assign(new Error(`Gemini ${response.status}: ${detail}`), { statusCode: 502 });
     }
     const payload = await response.json();
-    const text = payload.output_text || payload.outputs?.map((item) => item.text || item.content?.text || "").join("") || "";
+    const interactionText = payload.steps
+      ?.flatMap((step) => Array.isArray(step.content) ? step.content : [])
+      .map((part) => part.text || "")
+      .join("");
+    const text = payload.output_text || interactionText || payload.outputs?.map((item) => item.text || item.content?.text || "").join("") || "";
     if (!text) throw Object.assign(new Error("Gemini returned no structured text"), { statusCode: 502 });
     return normalizeCoachAdvice(JSON.parse(text));
   } finally {

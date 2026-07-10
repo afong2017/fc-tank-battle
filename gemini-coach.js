@@ -1,9 +1,9 @@
 // @ts-check
 
 (function () {
-  const REQUEST_INTERVAL_MS = 4000;
+  const REQUEST_INTERVAL_MS = 7000;
   const RETRY_INTERVAL_MS = 30000;
-  const REQUEST_TIMEOUT_MS = 4200;
+  const REQUEST_TIMEOUT_MS = 11000;
   let advice = null;
   let status = "CHECK";
   let model = "";
@@ -13,6 +13,22 @@
   function current() {
     if (!advice || advice.expiresAt <= Date.now()) return null;
     return advice;
+  }
+
+  async function checkConfiguration() {
+    if (!/^https?:$/.test(location.protocol)) {
+      status = "OFF";
+      return;
+    }
+    try {
+      const response = await fetch("/gemini-coach/status", { cache: "no-store" });
+      if (!response.ok) throw new Error(String(response.status));
+      const result = await response.json();
+      model = result.model || model;
+      status = result.configured ? "READY" : "OFF";
+    } catch {
+      status = "ERR";
+    }
   }
 
   async function tick(snapshot) {
@@ -50,4 +66,6 @@
     current,
     statusLabel: () => `${status}${model ? ` ${model.replace(/^gemini-/i, "")}` : ""}`,
   };
+
+  checkConfiguration();
 })();
