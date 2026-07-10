@@ -21,8 +21,10 @@
     fallbackBooted: false,
     checking: false,
     pendingGame: null,
+    reloading: false,
   };
   const VERSION_TIMEOUT_MS = 2500;
+  const SCRIPT_TIMEOUT_MS = 8000;
 
   function withVersion(file, version) {
     const mark = encodeURIComponent(version || Date.now());
@@ -66,8 +68,19 @@
       script.id = id;
       script.src = withVersion(file, version);
       script.async = false;
-      script.onload = () => resolve(script);
-      script.onerror = () => reject(new Error(`Cannot load ${file}`));
+      const timer = setTimeout(() => {
+        script.remove();
+        reject(new Error(`Timed out loading ${file}`));
+      }, SCRIPT_TIMEOUT_MS);
+      script.onload = () => {
+        clearTimeout(timer);
+        resolve(script);
+      };
+      script.onerror = () => {
+        clearTimeout(timer);
+        script.remove();
+        reject(new Error(`Cannot load ${file}`));
+      };
       document.body.appendChild(script);
     });
   }
@@ -90,8 +103,11 @@
   }
 
   async function applyAiUpgrade(next) {
-    setStatus("AI FILE");
+    setStatus("AI LOAD");
+    const previousAI = window.TankPartnerAI;
     await loadScript(next.ai.file || "ai.js", next.ai.version || next.ai.hash, "fc-hot-ai-next");
+    if (!window.TankPartnerAI || window.TankPartnerAI === previousAI) throw new Error("AI upgrade did not initialize");
+    await window.TankPartnerAI.ready;
     window.FCGameHotAPI?.reloadAiControllers?.();
     state.version = {
       ...state.version,
@@ -100,6 +116,23 @@
     };
     renderVersion(state.version);
     setStatus("AI UP");
+  }
+
+  function scheduleGameReload(next) {
+    // Game code is replaced only by one page reload at a safe non-playing boundary.
+    if (state.reloading) return;
+    state.reloading = true;
+    state.pendingGame = next;
+    renderVersion(next);
+    setStatus("GAME LOAD");
+    window.FCGameHotAPI?.setPendingGameUpgrade?.(true);
+    sessionStorage.setItem("fc-tank-battle.hot-upgrade", JSON.stringify({
+      at: Date.now(),
+      game: next.game?.version || next.game?.hash,
+      ai: next.ai?.version || next.ai?.hash,
+      pending: true,
+    }));
+    setTimeout(() => location.reload(), 120);
   }
 
   function applyGameUpgrade(next) {
@@ -113,6 +146,7 @@
       ai: next.ai?.version || next.ai?.hash,
       pending: true,
     }));
+    if (window.FCGameHotAPI?.canApplyGameUpgrade?.() !== false) scheduleGameReload(next);
   }
 
   async function checkNow() {
@@ -132,6 +166,10 @@
       }
       renderVersion(next);
       if (state.pendingGame) {
+        if (window.FCGameHotAPI?.canApplyGameUpgrade?.() !== false) {
+          scheduleGameReload(next);
+          return;
+        }
         if (sameVersion(state.pendingGame, next, "game") && sameVersion(state.version, next, "game")) {
           state.pendingGame = null;
           window.FCGameHotAPI?.setPendingGameUpgrade?.(false);
@@ -196,9 +234,11 @@
     checkNow,
     applyPendingGameUpgrade() {
       if (!state.pendingGame) return false;
-      renderVersion(state.pendingGame);
-      setStatus("GAME NEW");
-      window.FCGameHotAPI?.setPendingGameUpgrade?.(true);
+      if (window.FCGameHotAPI?.canApplyGameUpgrade?.() === false) {
+        setStatus("GAME WAIT");
+        return false;
+      }
+      scheduleGameReload(state.pendingGame);
       return true;
     },
     setEnabled(value) {

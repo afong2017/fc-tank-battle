@@ -1,6 +1,22 @@
 // @ts-check
 
 (function () {
+  // A hot-loaded AI inherits live state, then retires the previous worker and timers.
+  const previousAI = window.TankPartnerAI;
+  let inheritedHotState = null;
+  if (previousAI) {
+    try {
+      inheritedHotState = {
+        memory: previousAI.readMemory?.(),
+        experience: previousAI.readExperience?.(),
+        training: previousAI.readTraining?.(),
+      };
+    } catch {
+      inheritedHotState = null;
+    }
+    previousAI.dispose?.();
+  }
+
   const STORAGE_KEY = "fc-tank-battle.partner-ai.v2";
   const EXPERIENCE_KEY = "fc-tank-battle.ai-experience.v1";
   const EXPERIENCE_DB_NAME = "fc-tank-battle-ai";
@@ -17,6 +33,7 @@
   let experienceArchiveWrites = 0;
   let distanceWorker = null;
   let distanceWorkerSeq = 0;
+  let disposed = false;
   const workerPendingKeys = new Set();
   const TILE = 32;
   const DIRS = {
@@ -81,6 +98,16 @@
     dodge_failed: "dodge_focus",
     ally_death: "dodge_focus",
   };
+
+  if (inheritedHotState) {
+    const inheritedExperience = inheritedHotState.experience || {};
+    fileMemoryCache = { memory: inheritedHotState.memory || DEFAULT_MEMORY, experience: inheritedExperience };
+    fileExperienceCache = fileMemoryCache;
+    fileTrainingCache = {
+      seconds: Math.max(0, Number(inheritedHotState.training?.seconds) || 0),
+      games: Math.max(0, Math.floor(Number(inheritedHotState.training?.games) || 0)),
+    };
+  }
 
   function normalizeWeights(weights = {}) {
     const normalized = { ...DEFAULT_WEIGHTS };
@@ -457,7 +484,7 @@
   }
 
   function canUseServerSync() {
-    return /^https?:$/.test(location.protocol) && /^(localhost|127\.0\.0\.1)$/i.test(location.hostname);
+    return !disposed && /^https?:$/.test(location.protocol) && /^(localhost|127\.0\.0\.1)$/i.test(location.hostname);
   }
 
   let syncTimer = null;
@@ -470,7 +497,7 @@
     if (syncTimer || syncBusy) return;
     syncTimer = setTimeout(async () => {
       syncTimer = null;
-      if (syncBusy || !syncDirty) return;
+      if (disposed || syncBusy || !syncDirty) return;
       syncDirty = false;
       syncBusy = true;
       try {
@@ -487,7 +514,7 @@
         // localStorage remains the fallback if the local server is unavailable.
       } finally {
         syncBusy = false;
-        if (syncDirty) syncMemoryFile();
+        if (!disposed && syncDirty) syncMemoryFile();
       }
     }, 500);
   }
@@ -517,17 +544,27 @@
 
   function flushTraining() {
     if (!canUseServerSync() || restoringFromFile) return;
-    fetch(FILE_SYNC_URL, {
+    fetch(`${FILE_SYNC_URL}/training`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        memory: loadMemory(),
-        experience: loadExperience(),
         training: readTraining(),
       }),
     }).then(() => {
       syncDirty = false;
     }).catch(() => {});
+  }
+
+  function dispose() {
+    disposed = true;
+    if (syncTimer) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+    }
+    syncDirty = false;
+    workerPendingKeys.clear();
+    if (distanceWorker && typeof distanceWorker.terminate === "function") distanceWorker.terminate();
+    distanceWorker = null;
   }
 
   async function restoreMemoryFile() {
@@ -4384,6 +4421,7 @@
     addTrainingSeconds,
     incrementTrainingGames,
     flushTraining,
+    dispose,
+    ready: Promise.resolve(),
   };
-  restoreMemoryFile();
 })();

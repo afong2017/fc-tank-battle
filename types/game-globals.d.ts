@@ -82,6 +82,8 @@ interface TankPartnerAI {
   addTrainingSeconds(seconds?: number): void;
   incrementTrainingGames(): void;
   flushTraining(): void;
+  dispose?(): void;
+  ready?: Promise<void>;
 }
 
 interface FCGameHotAPI {

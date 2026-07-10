@@ -119,7 +119,12 @@ function readAiMemory() {
 }
 
 function writeAiMemory(data) {
+  let existing = {};
+  try {
+    existing = readAiMemory();
+  } catch {}
   const payload = {
+    ...existing,
     version: 1,
     updatedAt: new Date().toISOString(),
     ...data,
@@ -221,6 +226,11 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === "POST") {
         const data = await readJsonBody(req);
+        if (pathname === "/ai-memory/training" && !data?.training) {
+          res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: false, error: "training is required" }));
+          return;
+        }
         const saved = writeAiMemory(data);
         res.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
