@@ -91,6 +91,15 @@
     return normalized;
   }
 
+  function recoverSaturatedWeights(weights = {}) {
+    const normalized = normalizeWeights(weights);
+    const values = Object.values(normalized);
+    const spread = Math.max(...values) - Math.min(...values);
+    const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+    if (average > 4.7 && spread < 0.18) return { ...DEFAULT_WEIGHTS };
+    return normalized;
+  }
+
   function loadMemory() {
     if (canUseServerSync()) {
       return normalizeMemory(fileMemoryCache?.memory || DEFAULT_MEMORY);
@@ -105,8 +114,8 @@
 
   function normalizeMemory(saved = {}) {
     return {
-      weights: normalizeWeights(saved.weights),
-      bestWeights: normalizeWeights(saved.bestWeights || saved.weights),
+      weights: recoverSaturatedWeights(saved.weights),
+      bestWeights: recoverSaturatedWeights(saved.bestWeights || saved.weights),
       bestScore: saved.bestScore === null ? -Infinity : Number.isFinite(Number(saved.bestScore)) ? Number(saved.bestScore) : -Infinity,
       lastScore: Number.isFinite(Number(saved.lastScore)) ? Number(saved.lastScore) : 0,
       badRuns: Number(saved.badRuns) || 0,
@@ -1536,11 +1545,34 @@
     return criticalBaseThreat(ctx, enemy) || dist(enemy, ctx.base) < TILE * 7.2 || dist(enemy, tank) < TILE * 2.8;
   }
 
+  function estimatedBaseArrival(ctx, enemy) {
+    const ex = centerX(enemy);
+    const ey = centerY(enemy);
+    const bx = centerX(ctx.base);
+    const by = centerY(ctx.base);
+    const dx = bx - ex;
+    const dy = by - ey;
+    const distance = Math.abs(dx) + Math.abs(dy);
+    const speed = Math.max(55, Number(enemy.speed) || 90);
+    const motion = DIRS[enemy.dir] || { x: 0, y: 0 };
+    const toward = motion.x * Math.sign(dx) + motion.y * Math.sign(dy);
+    let seconds = distance / speed;
+    if (toward > 0) seconds *= 0.68;
+    else if (toward < 0) seconds *= 1.16;
+    if (threatLine(enemy, ctx.base, TILE * 2.2)) seconds *= 0.58;
+    if (centerY(enemy) > (ctx.rows || 24) * TILE * 0.5) seconds *= 0.82;
+    return seconds;
+  }
+
   function baseApproachTarget(ctx) {
     const ranked = (ctx.enemies || [])
       .filter((enemy) => visibleEnemy(ctx, enemy))
-      .map((enemy) => ({ enemy, baseDistance: dist(enemy, ctx.base) }))
-      .sort((a, b) => a.baseDistance - b.baseDistance);
+      .map((enemy) => ({
+        enemy,
+        baseDistance: dist(enemy, ctx.base),
+        arrival: estimatedBaseArrival(ctx, enemy),
+      }))
+      .sort((a, b) => a.arrival - b.arrival || a.baseDistance - b.baseDistance);
     if (!ranked.length) return null;
     return ranked.find((item) => !reservedTarget(ctx, item.enemy) || canShareTarget(ctx, item.enemy))?.enemy || ranked[0].enemy;
   }
