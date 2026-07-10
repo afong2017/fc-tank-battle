@@ -2716,22 +2716,10 @@
     return null;
   }
 
-  function alignmentDir(ctx, tank, dir, here) {
-    if (!dir) return null;
-    if (dir === "up" || dir === "down") {
-      const alignedX = here.x * TILE + 2;
-      if (Math.abs(tank.x - alignedX) > 2) return tank.x < alignedX ? "right" : "left";
-    } else {
-      const alignedY = here.y * TILE + 2;
-      if (Math.abs(tank.y - alignedY) > 2) return tank.y < alignedY ? "down" : "up";
-    }
-    return null;
-  }
-
   function routeStep(ctx, tank, distMap, allowBrickClear) {
     const here = cellOf(tank, ctx.cols, ctx.rows);
     const current = distMap[key(here.x, here.y, ctx.cols)];
-    const reversePenalty = 1.55 + Math.max(0, styleWeight(ctx, "survive") - 1) * 0.2;
+    const reversePenalty = 3.2 + Math.max(0, styleWeight(ctx, "survive") - 1) * 0.25;
     const options = [];
     for (const n of [
       { x: here.x + 1, y: here.y },
@@ -2749,8 +2737,8 @@
       options.push({ cell: n, dir, route, needsClear });
     }
     options.sort((a, b) => {
-      const ar = a.route - (a.dir === ctx.lastMoveDir ? 0.35 : 0) + (a.dir === OPPOSITE[ctx.lastMoveDir] ? reversePenalty : 0);
-      const br = b.route - (b.dir === ctx.lastMoveDir ? 0.35 : 0) + (b.dir === OPPOSITE[ctx.lastMoveDir] ? reversePenalty : 0);
+      const ar = a.route - (a.dir === ctx.lastMoveDir ? 0.75 : 0) + (a.dir === OPPOSITE[ctx.lastMoveDir] ? reversePenalty : 0);
+      const br = b.route - (b.dir === ctx.lastMoveDir ? 0.75 : 0) + (b.dir === OPPOSITE[ctx.lastMoveDir] ? reversePenalty : 0);
       return ar - br;
     });
     const best = options.find((option) => option.route < current || !Number.isFinite(current)) || options[0];
@@ -2875,8 +2863,8 @@
         const moveCost = routeTileCost(ctx, next.x, next.y, allowBrickClear);
         if (!Number.isFinite(moveCost)) continue;
         const dir = dirBetween(current, next);
-        const reversePenalty = dir === OPPOSITE[ctx.lastMoveDir] ? 0.65 : 0;
-        const straightBonus = dir === ctx.lastMoveDir ? -0.12 : 0;
+        const reversePenalty = dir === OPPOSITE[ctx.lastMoveDir] ? 2.4 : 0;
+        const straightBonus = dir === ctx.lastMoveDir ? -0.35 : 0;
         const tentative = gScore[currentKey] + moveCost + steelAdjacencyCost(ctx, next.x, next.y) + reversePenalty + straightBonus;
         const nextKey = key(next.x, next.y, ctx.cols);
         if (tentative >= gScore[nextKey]) continue;
@@ -2917,12 +2905,6 @@
     const bulletThreshold = routeBulletThreshold(mode);
     const aStarRoute = findAStarRoute(ctx, tank, goals, allowBrickClear);
     if (aStarRoute?.dir) {
-      const align = alignmentDir(ctx, tank, aStarRoute.dir, aStarRoute.cells[0]);
-      if (align && canMove(ctx, align) && !isMoveIntoEnemyBullet(tank, align, ctx.bullets || [], bulletThreshold)) {
-        ctx.routeFollowing = true;
-        ctx.plannedRoute = routePointsFromCells(tank, aStarRoute.cells);
-        return align;
-      }
       ctx.routeNeedsClear = aStarRoute.needsClear && clearableBrickAhead(ctx, tank, aStarRoute.dir);
       ctx.routeFollowing = true;
       if ((ctx.routeNeedsClear || canMove(ctx, aStarRoute.dir)) && !isMoveIntoEnemyBullet(tank, aStarRoute.dir, ctx.bullets || [], bulletThreshold)) {
@@ -2934,11 +2916,6 @@
     const here = cellOf(tank, ctx.cols, ctx.rows);
     const path = routeStep(ctx, tank, distMap, allowBrickClear);
     if (path.step) {
-      const align = alignmentDir(ctx, tank, path.step.dir, path.here);
-      if (align && canMove(ctx, align) && !isMoveIntoEnemyBullet(tank, align, ctx.bullets || [], bulletThreshold)) {
-        ctx.plannedRoute = routePoints(ctx, tank, distMap, align);
-        return align;
-      }
       ctx.routeNeedsClear = path.step.needsClear && clearableBrickAhead(ctx, tank, path.step.dir);
       ctx.routeFollowing = true;
       if ((ctx.routeNeedsClear || canMove(ctx, path.step.dir)) && !isMoveIntoEnemyBullet(tank, path.step.dir, ctx.bullets || [], bulletThreshold)) {
@@ -3529,10 +3506,16 @@
       }
       if (action.dir && !action.hold) {
         const reversing = lastMoveDir && action.dir === OPPOSITE[lastMoveDir];
-        if (reversing && directionLock > 0 && !ctx.routeFollowing && action.mode !== "dodge" && canMove(ctx, lastMoveDir)) {
+        const dodging = action.mode?.includes("dodge");
+        const previousDirectionSafe = lastMoveDir
+          && canMove(ctx, lastMoveDir)
+          && !isMoveIntoEnemyBullet(ctx.tank, lastMoveDir, ctx.bullets || [], actionBulletThreshold);
+        if (reversing && directionLock > 0 && !dodging && previousDirectionSafe) {
           action = { ...action, dir: lastMoveDir };
         } else if (lastMoveDir && action.dir !== lastMoveDir) {
-          directionLock = action.mode === "dodge" ? 0.28 : 0.6;
+          directionLock = dodging ? 0.28 : 0.6;
+        } else if (!lastMoveDir) {
+          directionLock = 0.6;
         }
         lastMoveDir = action.dir;
       }
