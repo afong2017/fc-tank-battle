@@ -3,13 +3,13 @@
 (function () {
   const DEFAULT_VERSION = {
     ai: {
-      version: "local-ai",
+      version: "20260710130402",
       file: "ai.js",
       developer: "CODEX",
       model: "GPT-5.5",
-      updatedAtBeijing: "LOCAL",
+      updatedAtBeijing: "2026-07-10 13:04:02 CST",
     },
-    game: { version: "local-game", file: "game.js" },
+    game: { version: "20260710130402", file: "game.js" },
     pollSeconds: 5,
   };
 
