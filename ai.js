@@ -2271,23 +2271,58 @@
     };
   }
 
-  function firstStageBasePocketGoals(ctx, tank, target) {
-    if (Number(ctx.stage) !== 1 || !target?.alive) return [];
-    const baseCell = cellOf(ctx.base, ctx.cols, ctx.rows);
+  function baseGuardCells(ctx) {
+    const left = Math.floor((ctx.baseGuard?.x ?? ctx.base.x - TILE) / TILE);
+    const top = Math.floor((ctx.baseGuard?.y ?? ctx.base.y - TILE) / TILE);
+    const width = Math.max(1, Math.floor((ctx.baseGuard?.w ?? TILE * 4) / TILE));
+    const height = Math.max(1, Math.floor((ctx.baseGuard?.h ?? TILE * 3) / TILE));
+    return { left, right: left + width - 1, top, bottom: top + height - 1 };
+  }
+
+  function chooseBasePocketGate(ctx, tank, target) {
+    if (!target?.alive) return null;
+    const guard = baseGuardCells(ctx);
+    const targetCell = cellOf(target, ctx.cols, ctx.rows);
+    const preferredSide = targetCell.x < (guard.left + guard.right) / 2 ? "left" : "right";
+    const upperY = Math.max(1, guard.top - 3);
+    const lowerY = guard.top;
+    const fromTank = buildWeightedDistance(ctx, [tank], true);
+    const fromTarget = buildWeightedDistance(ctx, [target], true);
+    const candidates = [];
+    for (const side of [preferredSide, preferredSide === "left" ? "right" : "left"]) {
+      for (let offset = 1; offset <= 5; offset++) {
+        const x = side === "left" ? guard.left - offset : guard.right + offset;
+        if (!walkable(ctx, x, upperY) || !walkable(ctx, x, lowerY)) continue;
+        const toUpper = fromTank[key(x, upperY, ctx.cols)];
+        const toTarget = fromTarget[key(x, lowerY, ctx.cols)];
+        let throughGate = 0;
+        for (let y = upperY + 1; y <= lowerY; y++) {
+          const cost = routeTileCost(ctx, x, y, true);
+          if (!Number.isFinite(cost)) {
+            throughGate = Infinity;
+            break;
+          }
+          throughGate += cost + steelAdjacencyCost(ctx, x, y);
+        }
+        if (![toUpper, throughGate, toTarget].every(Number.isFinite)) continue;
+        const sidePenalty = side === preferredSide ? 0 : 8;
+        candidates.push({ side, x, upperY, lowerY, score: toUpper + throughGate + toTarget + sidePenalty + offset * 0.12 });
+      }
+    }
+    return candidates.sort((a, b) => a.score - b.score)[0] || null;
+  }
+
+  function basePocketGoals(ctx, tank, target) {
+    const gate = ctx.basePocketGate;
+    if (!gate || !target?.alive) return [];
     const tankCell = cellOf(tank, ctx.cols, ctx.rows);
     const targetCell = cellOf(target, ctx.cols, ctx.rows);
-    if (targetCell.y < baseCell.y - 2 || tankCell.y >= targetCell.y) return [];
-
-    const targetOnLeft = ctx.basePocketSide === "left" || (ctx.basePocketSide !== "right" && targetCell.x < baseCell.x);
-    const sideX = targetOnLeft ? baseCell.x - 5 : baseCell.x + 3;
-    const upperGateY = baseCell.y - 5;
-    const lowerGateY = baseCell.y - 2;
-    const gateY = tankCell.y <= upperGateY ? upperGateY : lowerGateY;
-    const searchX = targetOnLeft ? [sideX, sideX - 1, sideX + 1] : [sideX, sideX + 1, sideX - 1];
-    const gate = searchX
-      .map((x) => ({ x, y: gateY }))
-      .find((cell) => walkable(ctx, cell.x, cell.y));
-    return gate ? [{ x: gate.x * TILE + 2, y: gate.y * TILE + 2, w: 28, h: 28 }] : [];
+    if (tankCell.y >= targetCell.y) return [];
+    let goalY = null;
+    if (tankCell.y < gate.upperY || Math.abs(tankCell.x - gate.x) > 1) goalY = gate.upperY;
+    else if (tankCell.y < gate.lowerY) goalY = gate.lowerY;
+    if (goalY === null || !walkable(ctx, gate.x, goalY)) return [];
+    return [{ x: gate.x * TILE + 2, y: goalY * TILE + 2, w: 28, h: 28 }];
   }
 
   function spawnThreat(ctx, tank, name) {
@@ -3420,7 +3455,7 @@
     }
 
     const face = directionTo(tank, target);
-    const pocketGoals = firstStageBasePocketGoals(ctx, tank, target);
+    const pocketGoals = basePocketGoals(ctx, tank, target);
     const rawGoals = pocketGoals.length
       ? pocketGoals
       : distance < TILE * 3.2
@@ -3601,8 +3636,8 @@
     let thinkCooldown = 0;
     let lastAction = null;
     let lastUrgencyKey = "";
-    let basePocketSide = null;
     let basePocketTarget = null;
+    let basePocketGate = null;
 
     function learn(event, amount = 1) {
       const weights = memory.weights;
@@ -3827,23 +3862,25 @@
       const urgentFreeze = urgentFreezeBonus(ctx, tank);
       const bonus = !scan.emergency && !visibleBasePressure ? nearbyBonus(ctx, tank) : null;
       const baseNearestTarget = baseApproachTarget(ctx);
-      const baseCell = cellOf(ctx.base, ctx.cols, ctx.rows);
+      const guardCells = baseGuardCells(ctx);
       const tankCell = cellOf(tank, ctx.cols, ctx.rows);
       const pocketTargetCell = baseNearestTarget ? cellOf(baseNearestTarget, ctx.cols, ctx.rows) : null;
-      const pocketActive = Number(ctx.stage) === 1
-        && baseNearestTarget?.alive
-        && pocketTargetCell.y >= baseCell.y - 2
-        && tankCell.y < pocketTargetCell.y;
+      const tankNearBasePocket = tankCell.x >= guardCells.left - 3 && tankCell.x <= guardCells.right + 3;
+      const pocketActive = baseNearestTarget?.alive
+        && pocketTargetCell.y >= guardCells.top
+        && tankCell.y < pocketTargetCell.y
+        && tankCell.y <= guardCells.top
+        && tankNearBasePocket;
       if (pocketActive) {
-        if (basePocketTarget !== baseNearestTarget || !basePocketSide) {
+        if (basePocketTarget !== baseNearestTarget || !basePocketGate) {
           basePocketTarget = baseNearestTarget;
-          basePocketSide = pocketTargetCell.x < baseCell.x ? "left" : "right";
+          basePocketGate = chooseBasePocketGate(ctx, tank, baseNearestTarget);
         }
-        ctx.basePocketSide = basePocketSide;
+        ctx.basePocketGate = basePocketGate;
       } else {
-        basePocketSide = null;
         basePocketTarget = null;
-        ctx.basePocketSide = null;
+        basePocketGate = null;
+        ctx.basePocketGate = null;
       }
       const intruder = baseIntruder(ctx, name);
       const anchorThreat = baseAnchorThreat(ctx);
@@ -3921,7 +3958,7 @@
         const targetThreat = baseThreatScore(ctx, baseNearestTarget);
         const coachRole = name === "1P" ? ctx.coachAdvice?.p1Role : ctx.coachAdvice?.p2Role;
         const intercepting = coachRole === "intercept" || targetThreat > 14 || dist(baseNearestTarget, ctx.base) < TILE * 11;
-        const pocketGoals = firstStageBasePocketGoals(ctx, tank, baseNearestTarget);
+        const pocketGoals = basePocketGoals(ctx, tank, baseNearestTarget);
         const goals = pocketGoals.length ? pocketGoals : balancedCombatGoals(ctx, tank, baseNearestTarget, name);
         const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, intercepting ? "intercept" : "attack") || directionTo(tank, baseNearestTarget);
         lastMode = "base-nearest-hunt";
