@@ -10,6 +10,15 @@
   let busy = false;
   let nextRequestAt = 0;
 
+  function statusLabel() {
+    return `${status}${model ? ` ${model.replace(/^gemini-/i, "")}` : ""}`;
+  }
+
+  function renderStatus() {
+    const element = document.getElementById("geminiStatus");
+    if (element) element.textContent = `GEMINI ${statusLabel()}`;
+  }
+
   function current() {
     if (!advice || advice.expiresAt <= Date.now()) return null;
     return advice;
@@ -28,6 +37,8 @@
       status = result.configured ? "READY" : "OFF";
     } catch {
       status = "ERR";
+    } finally {
+      renderStatus();
     }
   }
 
@@ -35,6 +46,7 @@
     if (!/^https?:$/.test(location.protocol) || busy || Date.now() < nextRequestAt) return;
     busy = true;
     status = "THINK";
+    renderStatus();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
@@ -51,9 +63,11 @@
       advice = { ...result.advice, model: result.model || "Gemini", expiresAt: Date.now() + ttl * 1000 };
       model = result.model || model;
       status = "LIVE";
+      renderStatus();
       nextRequestAt = Date.now() + REQUEST_INTERVAL_MS;
     } catch (error) {
       status = String(error?.message || error) === "503" ? "OFF" : "ERR";
+      renderStatus();
       nextRequestAt = Date.now() + RETRY_INTERVAL_MS;
     } finally {
       clearTimeout(timer);
@@ -64,7 +78,7 @@
   window.FCGeminiCoach = {
     tick,
     current,
-    statusLabel: () => `${status}${model ? ` ${model.replace(/^gemini-/i, "")}` : ""}`,
+    statusLabel,
   };
 
   checkConfiguration();
