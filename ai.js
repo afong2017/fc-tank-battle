@@ -2427,6 +2427,35 @@
       .map((c) => ({ x: c.x * TILE + 2, y: c.y * TILE + 2, w: 28, h: 28 }));
   }
 
+  function approachCorridorGoals(ctx, target, name) {
+    if (!target?.alive) return [];
+    const enemy = cellOf(target, ctx.cols, ctx.rows);
+    const base = cellOf(ctx.base, ctx.cols, ctx.rows);
+    const side = name === "1P" ? -1 : 1;
+    const cells = [];
+    for (const ratio of [0.2, 0.35, 0.5, 0.65, 0.8]) {
+      const x = Math.round(enemy.x + (base.x - enemy.x) * ratio);
+      const y = Math.round(enemy.y + (base.y - enemy.y) * ratio);
+      cells.push(
+        { x, y },
+        { x: x + side, y },
+        { x: x - side, y },
+        { x, y: y - 1 },
+        { x, y: y + 1 },
+      );
+    }
+    return cells
+      .filter((cell, index, list) => list.findIndex((other) => other.x === cell.x && other.y === cell.y) === index)
+      .filter((cell) => walkable(ctx, cell.x, cell.y) && !baseBlocked(ctx, cell.x, cell.y))
+      .sort((a, b) => {
+        const aShot = firingProfile(ctx, a, enemy).viable ? 0 : 1;
+        const bShot = firingProfile(ctx, b, enemy).viable ? 0 : 1;
+        if (aShot !== bShot) return aShot - bShot;
+        return cellDist(a, enemy) - cellDist(b, enemy);
+      })
+      .map((cell) => ({ x: cell.x * TILE + 2, y: cell.y * TILE + 2, w: 28, h: 28 }));
+  }
+
   function balancedCombatGoals(ctx, tank, target, name) {
     if (!target?.alive) return [];
     const threat = baseThreatScore(ctx, target);
@@ -2435,10 +2464,11 @@
     const firing = shootingPositionGoals(ctx, tank, target, name);
     const chase = directChaseGoals(ctx, target);
     const intercept = interceptGoals(ctx, target, name);
+    const corridor = approachCorridorGoals(ctx, target, name);
     if (urgent) {
-      return [...firing.slice(0, 12), ...intercept.slice(0, 18), ...chase];
+      return [...corridor, ...firing.slice(0, 12), ...intercept.slice(0, 18), ...chase];
     }
-    return [...chase, ...firing.slice(0, 10), ...intercept.slice(0, 8)];
+    return [...chase, ...firing.slice(0, 10), ...corridor.slice(0, 8), ...intercept.slice(0, 8)];
   }
 
   function firingProfile(ctx, goalCell, targetCell) {
@@ -3189,12 +3219,14 @@
     }
 
     const face = directionTo(tank, target);
-    const goals = [
-      ...shootingPositionGoals(ctx, tank, target, name),
-      ...attackGoals(ctx, target).slice(0, 10),
-      ...approachGoals(ctx, target).slice(0, 8),
-      ...interceptGoals(ctx, target, name).slice(0, 6),
-    ];
+    const goals = baseCritical
+      ? balancedCombatGoals(ctx, tank, target, name)
+      : [
+          ...shootingPositionGoals(ctx, tank, target, name),
+          ...attackGoals(ctx, target).slice(0, 10),
+          ...approachGoals(ctx, target).slice(0, 8),
+          ...interceptGoals(ctx, target, name).slice(0, 6),
+        ];
     const dir = routeDir(ctx, tank, goals, target, "attack");
     if (ctx.routeNeedsClear && ctx.canFire?.()) {
       return { dir, fire: true, hold: true, mode: "close-melee-clear", target };

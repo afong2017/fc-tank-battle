@@ -2459,7 +2459,12 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
   clampTankMotion(tank, beforeX, beforeY, dt);
   if (autoControlled) {
     const moved = Math.abs(tank.x - beforeX) + Math.abs(tank.y - beforeY);
-    if (moved < 0.2 && action?.dir && !action.hold) tank.stuck += dt;
+    const movementWasBlocked = moved < 0.2
+      && action?.dir
+      && !action.hold
+      && tank.dir === action.dir
+      && (tank.turnCooldown || 0) <= 0;
+    if (movementWasBlocked) tank.stuck += dt;
     else tank.stuck = Math.max(0, tank.stuck - dt * 2);
     if (tank.stuck > 0.55) {
       teachAis("stuck", -0.2);
