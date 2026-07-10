@@ -2578,6 +2578,29 @@
       .map((c) => ({ x: c.x * TILE + 2, y: c.y * TILE + 2, w: 28, h: 28 }));
   }
 
+  function meleeInterceptGoals(ctx, target) {
+    if (!target?.alive) return [];
+    const current = cellOf(target, ctx.cols, ctx.rows);
+    const motion = DIRS[target.dir] || { x: 0, y: 0 };
+    const lead = (target.speed || 0) > 100 ? 2 : 1;
+    const projected = {
+      x: clamp(current.x + motion.x * lead, 0, ctx.cols - 1),
+      y: clamp(current.y + motion.y * lead, 0, ctx.rows - 1),
+    };
+    const cells = [
+      projected,
+      { x: projected.x + 1, y: projected.y },
+      { x: projected.x - 1, y: projected.y },
+      { x: projected.x, y: projected.y + 1 },
+      { x: projected.x, y: projected.y - 1 },
+    ];
+    const goals = cells
+      .filter((cell, index, list) => list.findIndex((other) => other.x === cell.x && other.y === cell.y) === index)
+      .filter((cell) => walkable(ctx, cell.x, cell.y));
+    return (goals.length ? goals : directChaseGoals(ctx, target))
+      .map((cell) => cell.w ? cell : { x: cell.x * TILE + 2, y: cell.y * TILE + 2, w: 28, h: 28 });
+  }
+
   function approachCorridorGoals(ctx, target, name) {
     if (!target?.alive) return [];
     const enemy = cellOf(target, ctx.cols, ctx.rows);
@@ -3320,7 +3343,7 @@
   }
 
   function sideLaneAlignAction(ctx, tank, target) {
-    if (!target?.alive || dist(tank, target) > TILE * 5.5) return null;
+    if (!target?.alive || dist(tank, target) > TILE * 3.8) return null;
     const dx = Math.abs(centerX(tank) - centerX(target));
     const dy = Math.abs(centerY(tank) - centerY(target));
     const safeMove = (dir) => dir && canMove(ctx, dir) && !isMoveIntoEnemyBullet(tank, dir, ctx.bullets || [], 9);
@@ -3355,7 +3378,7 @@
       if (dir) return { dir, fire: false, hold: false, mode: "close-melee-dodge", target };
     }
     const certain = safeShotDir(ctx, tank, target);
-    if (certain && ctx.canFire?.() && risk < 13) {
+    if (certain && risk < 13) {
       return { dir: certain, fire: true, hold: true, mode: "close-melee-fire", target };
     }
 
@@ -3373,30 +3396,21 @@
     if (align) return align;
 
     const shot = shotDir(ctx, tank, target);
-    if (shot && !sideLaneShotTooEarly(ctx, tank, target, shot) && ctx.canFire?.() && risk < 6.6) {
+    if (shot && !sideLaneShotTooEarly(ctx, tank, target, shot) && risk < 6.6) {
       return { dir: shot, fire: true, hold: true, mode: "close-melee-fire", target };
     }
 
-    const lineClear = attackLineClearDir(ctx, tank, target, baseCritical);
-    if (lineClear && ctx.canFire?.() && !alignedWithBase(ctx, target)) {
-      return { dir: lineClear, fire: true, hold: true, mode: "close-melee-clear", target };
-    }
-    const tacticalClear = tacticalClearDir(ctx, tank, target);
-    if (tacticalClear && ctx.canFire?.()) {
-      return { dir: tacticalClear, fire: true, hold: true, mode: "close-melee-clear", target };
-    }
-
     const face = directionTo(tank, target);
-    const goals = baseCritical
-      ? balancedCombatGoals(ctx, tank, target, name)
-      : [
-          ...shootingPositionGoals(ctx, tank, target, name),
-          ...attackGoals(ctx, target).slice(0, 10),
-          ...approachGoals(ctx, target).slice(0, 8),
-          ...interceptGoals(ctx, target, name).slice(0, 6),
-        ];
+    const rawGoals = distance < TILE * 3.2
+      ? directChaseGoals(ctx, target)
+      : meleeInterceptGoals(ctx, target);
+    const tankCell = cellOf(tank, ctx.cols, ctx.rows);
+    const goals = rawGoals.filter((goal) => {
+      const cell = cellOf(goal, ctx.cols, ctx.rows);
+      return cell.x !== tankCell.x || cell.y !== tankCell.y;
+    });
     const dir = routeDir(ctx, tank, goals, target, "attack");
-    if (ctx.routeNeedsClear && ctx.canFire?.()) {
+    if (ctx.routeNeedsClear) {
       return { dir, fire: true, hold: true, mode: "close-melee-clear", target };
     }
     if (!dir && face && canMove(ctx, face)) {
@@ -3663,7 +3677,8 @@
       if (!scan.bullet) return null;
       const risk = scan.bulletRisk + movePathRisk(ctx.tank, ctx.tank.dir, ctx.bullets || [], ctx.allyFireReports || []) * 0.22;
       if (risk < 6.2) return null;
-      const target = scan.baseTarget || scan.enemyTarget;
+      const shooter = scan.bullet.owner;
+      const target = visibleEnemy(ctx, shooter) ? shooter : scan.baseTarget || scan.enemyTarget;
       const mustDuel = mustDuelShotDir(ctx, ctx.tank, target);
       if (mustDuel) return { dir: mustDuel, fire: true, hold: true, mode: "duel-fire", target };
       const duel = risk < 8.2 ? duelShotDir(ctx, ctx.tank, target, scan.bullet) : null;
