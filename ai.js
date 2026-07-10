@@ -3043,24 +3043,61 @@
     return null;
   }
 
+  function axisLineShotDir(ctx, tank, target) {
+    if (!target?.alive) return null;
+    const tx = centerX(tank);
+    const ty = centerY(tank);
+    const ex = centerX(target);
+    const ey = centerY(target);
+    const dx = ex - tx;
+    const dy = ey - ty;
+    const laneTolerance = 12;
+    let dir = null;
+    if (Math.abs(dx) <= laneTolerance && Math.abs(dy) >= TILE * 3) dir = dy < 0 ? "up" : "down";
+    else if (Math.abs(dy) <= laneTolerance && Math.abs(dx) >= TILE * 3) dir = dx < 0 ? "left" : "right";
+    if (!dir || dist(tank, target) > TILE * 13.5) return null;
+    if (alignedWithBase(ctx, target) && !certainHit(ctx, tank, dir, target)) return null;
+
+    const d = DIRS[dir];
+    let x = tx;
+    let y = ty;
+    for (let traveled = 8; traveled <= TILE * 13.75; traveled += 8) {
+      x += d.x * 8;
+      y += d.y * 8;
+      if (x < 0 || y < 0 || x >= ctx.cols * TILE || y >= ctx.rows * TILE) return null;
+      const probe = { x: x - 4, y: y - 4, w: 8, h: 8 };
+      if ((ctx.friends || []).some((friend) => friend?.alive && friend !== tank && overlaps(probe, friend))) return null;
+      if (overlaps(probe, ctx.base)) return null;
+      const tileX = Math.floor(x / TILE);
+      const tileY = Math.floor(y / TILE);
+      const tile = ctx.tileAt?.(tileX, tileY);
+      if (nearBase(ctx, tileX, tileY) || tile === "B" || tile === "S" || tile === "W" || tile === "E") return null;
+      if (overlaps(probe, target)) return dir;
+      if ((ctx.enemies || []).some((enemy) => enemy?.alive && enemy !== target && overlaps(probe, enemy))) return null;
+    }
+    return null;
+  }
+
   function attackOpportunityAction(ctx, tank, preferredTarget, name) {
     if (!ctx.canFire?.()) return null;
     const risk = bulletRisk(tank, ctx.bullets || [], true) + allyRadioRisk(tank, ctx.allyFireReports || []);
     if (risk > 9.5) return null;
     const candidates = [preferredTarget, ...(ctx.enemies || [])]
       .filter((enemy, index, list) => enemy?.alive && list.indexOf(enemy) === index)
-      .filter((enemy) => visibleEnemy(ctx, enemy) && eligibleSideTarget(ctx, enemy, name))
+      .filter((enemy) => visibleEnemy(ctx, enemy))
       .filter((enemy) => !reservedTarget(ctx, enemy) || canShareTarget(ctx, enemy, tank))
       .map((enemy) => {
+        const axis = axisLineShotDir(ctx, tank, enemy);
+        if (!axis && !eligibleSideTarget(ctx, enemy, name)) return null;
         const certain = safeShotDir(ctx, tank, enemy);
-        const dir = certain || shotDir(ctx, tank, enemy);
+        const dir = axis || certain || shotDir(ctx, tank, enemy);
         if (!dir || sideLaneShotTooEarly(ctx, tank, enemy, dir)) return null;
         const distance = dist(tank, enemy);
         const preferred = enemy === preferredTarget ? 1800 : 0;
         const close = Math.max(0, TILE * 8 - distance) * 5;
         const basePressure = baseThreatScore(ctx, enemy) * 24;
         const facing = dir === tank.dir ? 520 : 0;
-        return { enemy, dir, score: preferred + close + basePressure + facing + (certain ? 900 : 0) };
+        return { enemy, dir, score: preferred + close + basePressure + facing + (axis ? 1500 : 0) + (certain ? 900 : 0) };
       })
       .filter(Boolean)
       .sort((a, b) => b.score - a.score);
@@ -3075,23 +3112,26 @@
     if (currentRisk > 4.8) return null;
     const candidates = [];
     for (const enemy of ctx.enemies || []) {
-      if (!visibleEnemy(ctx, enemy) || !eligibleSideTarget(ctx, enemy, name)) continue;
+      if (!visibleEnemy(ctx, enemy)) continue;
       const distance = dist(tank, enemy);
       if (distance < TILE * 7) continue;
-      const dirs = [tank.dir, ...targetDirOrder(tank, enemy)]
+      const axis = axisLineShotDir(ctx, tank, enemy);
+      if (!axis && !eligibleSideTarget(ctx, enemy, name)) continue;
+      if (reservedTarget(ctx, enemy) && !canShareTarget(ctx, enemy, tank)) continue;
+      const dirs = [axis, tank.dir, ...targetDirOrder(tank, enemy)]
         .filter((dir, index, list) => dir && list.indexOf(dir) === index);
       for (const dir of dirs) {
-        if (!ctx.canShoot?.(dir, enemy)) continue;
+        if (dir !== axis && !ctx.canShoot?.(dir, enemy)) continue;
         const turnCost = dir === tank.dir ? 0 : 260;
         const baseValue = baseThreatScore(ctx, enemy) * 16;
         const laneValue = threatLine(enemy, ctx.base, TILE * 2.2) ? 480 : 0;
         const distanceValue = Math.min(520, distance * 0.55);
         const ownSideValue = ownSide(ctx, enemy, name) ? 240 : 0;
-        if (dir !== tank.dir && baseThreatScore(ctx, enemy) < 12 && !threatLine(enemy, ctx.base, TILE * 2.2)) continue;
+        if (dir !== axis && dir !== tank.dir && baseThreatScore(ctx, enemy) < 12 && !threatLine(enemy, ctx.base, TILE * 2.2)) continue;
         candidates.push({
           enemy,
           dir,
-          score: baseValue + laneValue + distanceValue + ownSideValue - turnCost,
+          score: baseValue + laneValue + distanceValue + ownSideValue + (dir === axis ? 1400 : 0) - turnCost,
         });
       }
     }
@@ -3610,7 +3650,7 @@
       const shotOpportunitySignature = (ctx.enemies || [])
         .filter((enemy) => enemy?.alive && visibleEnemy(ctx, enemy))
         .map((enemy) => {
-          const dir = safeShotDir(ctx, ctx.tank, enemy) || shotDir(ctx, ctx.tank, enemy);
+          const dir = axisLineShotDir(ctx, ctx.tank, enemy) || safeShotDir(ctx, ctx.tank, enemy) || shotDir(ctx, ctx.tank, enemy);
           return dir ? `${Math.round(centerX(enemy) / 16)},${Math.round(centerY(enemy) / 16)},${dir}` : null;
         })
         .filter(Boolean)
