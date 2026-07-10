@@ -102,11 +102,30 @@ interface FCHotUpgrade {
   current(): unknown;
 }
 
+interface GeminiCoachAdvice {
+  p1Role: "intercept" | "hunt" | "survive";
+  p2Role: "intercept" | "hunt" | "survive";
+  focusLane: "left" | "center" | "right" | "none";
+  targetRule: "fastest-base" | "nearest-base" | "nearest-self";
+  urgency: number;
+  ttlSeconds: number;
+  reason: string;
+  model?: string;
+  expiresAt: number;
+}
+
+interface FCGeminiCoach {
+  tick(snapshot: Record<string, unknown>): Promise<void>;
+  current(): GeminiCoachAdvice | null;
+  statusLabel(): string;
+}
+
 interface Window {
   TankPartnerAI?: TankPartnerAI;
   FCGameHotAPI?: FCGameHotAPI;
   FCHotUpgrade?: FCHotUpgrade;
   FCHotUpgradeVersion?: { ai?: Record<string, unknown>; game?: Record<string, unknown> };
+  FCGeminiCoach?: FCGeminiCoach;
   __TankAIDistanceWorkerCache?: Map<string, unknown>;
   webkitAudioContext?: typeof AudioContext;
 }

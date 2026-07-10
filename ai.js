@@ -1561,6 +1561,14 @@
     else if (toward < 0) seconds *= 1.16;
     if (threatLine(enemy, ctx.base, TILE * 2.2)) seconds *= 0.58;
     if (centerY(enemy) > (ctx.rows || 24) * TILE * 0.5) seconds *= 0.82;
+    const advice = ctx.coachAdvice;
+    if (advice) {
+      const width = (ctx.cols || 26) * TILE;
+      const lane = ex < width * 0.36 ? "left" : ex > width * 0.64 ? "right" : "center";
+      if (advice.focusLane === lane) seconds *= 0.78 - Math.min(0.16, (Number(advice.urgency) || 0) * 0.16);
+      if (advice.targetRule === "nearest-self" && ctx.tank) seconds += dist(ctx.tank, enemy) / (speed * 2.4);
+      if (advice.targetRule === "nearest-base") seconds = seconds * 0.7 + distance / speed * 0.3;
+    }
     return seconds;
   }
 
@@ -3561,6 +3569,7 @@
     function decide(ctx, dt = 0) {
       ctx.cols = ctx.cols || 26;
       ctx.rows = ctx.rows || 24;
+      ctx.controllerName = name;
       ctx.lastMoveDir = lastMoveDir;
       ctx.adaptive = adaptiveProfile(memory);
       ctx.tacticalMemory = memory.tacticalMemory || normalizeTacticalMemory();
@@ -3674,7 +3683,8 @@
         }
         ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
         const targetThreat = baseThreatScore(ctx, baseNearestTarget);
-        const intercepting = targetThreat > 14 || dist(baseNearestTarget, ctx.base) < TILE * 11;
+        const coachRole = name === "1P" ? ctx.coachAdvice?.p1Role : ctx.coachAdvice?.p2Role;
+        const intercepting = coachRole === "intercept" || targetThreat > 14 || dist(baseNearestTarget, ctx.base) < TILE * 11;
         const goals = balancedCombatGoals(ctx, tank, baseNearestTarget, name);
         const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, intercepting ? "intercept" : "attack") || directionTo(tank, baseNearestTarget);
         lastMode = "base-nearest-hunt";

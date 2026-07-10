@@ -15,6 +15,7 @@ const ui = {
   aiWeights: document.getElementById("aiWeights"),
   hotUpgradeStatus: document.getElementById("hotUpgradeStatus"),
   aiVersionInfo: document.getElementById("aiVersionInfo"),
+  geminiStatus: document.getElementById("geminiStatus"),
   lives: document.getElementById("lives"),
   p1Deaths: document.getElementById("p1Deaths"),
   p2Deaths: document.getElementById("p2Deaths"),
@@ -110,6 +111,7 @@ let lastEnemyMeterSlots = -1;
 let spawnClock = 0;
 let freezeClock = 0;
 let shake = 0;
+let geminiCoachClock = 0;
 
 const colors = {
   brick: "#b65c35",
@@ -1106,6 +1108,7 @@ function updateUi() {
     const scoreText = Number.isFinite(Number(memory.lastScore)) ? ` P${Math.round(Number(memory.lastScore))}` : "";
     ui.aiWeights.innerHTML = `<span class="ai-param">D${formatAiWeight(w.defend)}</span><span class="ai-param">S${formatAiWeight(w.survive)}</span><span class="ai-param">A${formatAiWeight(w.attack)}</span><span class="ai-param">C${formatAiWeight(w.clear)}</span><span>${evoText}</span><span>${geneText}</span><span>${patch}</span><span>${flaw}</span><span>${scoreText.trim()}</span>`;
   }
+  if (ui.geminiStatus) ui.geminiStatus.textContent = `GEMINI ${window.FCGeminiCoach?.statusLabel?.() || "OFF"}`;
   ui.lives.textContent = `${formatLives(lives)}/${formatLives(lives2)}`;
   ui.p1Deaths.textContent = String(p1Deaths).padStart(2, "0");
   ui.p2Deaths.textContent = String(p2Deaths).padStart(2, "0");
@@ -2212,6 +2215,7 @@ function aiContext(tank, reservedTargets = [], weights = null) {
     friends: [player, player2].filter((t) => t?.alive && t !== tank),
     reservedTargets,
     weights,
+    coachAdvice: window.FCGeminiCoach?.current?.() || null,
     forcedTarget: visibleEnemyForAlly(tank.lockedBaseTarget) ? tank.lockedBaseTarget : null,
     bullets,
     allyFireReports: allyFireReports.filter((report) => report.owner !== tank && report.ttl > 0),
@@ -2240,6 +2244,34 @@ function aiContext(tank, reservedTargets = [], weights = null) {
       const next = { x: tank.x + d.x * step, y: tank.y + d.y * step, w: tank.w, h: tank.h };
       return !blocked(next, tank);
     },
+  };
+}
+
+function geminiCoachSnapshot() {
+  const compactTank = (tank) => tank?.alive ? {
+    x: Math.round(centerOf(tank).x / TILE),
+    y: Math.round(centerOf(tank).y / TILE),
+    dir: tank.dir,
+    speed: tank.speed,
+    cooldown: Math.round((tank.cooldown || 0) * 10) / 10,
+  } : null;
+  return {
+    stage: stageIndex + 1,
+    time: Math.round(gameTime * 10) / 10,
+    baseAlive,
+    freezeSeconds: Math.round(freezeClock * 10) / 10,
+    map: map.map((row) => row.join("")).join("/"),
+    allies: { p1: compactTank(player), p2: compactTank(player2) },
+    enemies: enemies.filter((enemy) => enemy.alive).map((enemy) => ({
+      ...compactTank(enemy),
+      kind: enemy.kind,
+      baseDistance: Math.round((Math.abs(enemy.x - baseRect.x) + Math.abs(enemy.y - baseRect.y)) / TILE),
+    })),
+    enemyBullets: bullets.filter((bullet) => bullet.enemy).slice(0, 16).map((bullet) => ({
+      x: Math.round(centerOf(bullet).x / TILE),
+      y: Math.round(centerOf(bullet).y / TILE),
+      dir: bullet.dir,
+    })),
   };
 }
 
@@ -2494,6 +2526,11 @@ function update(dt) {
   if (state !== "playing") return;
   moveFrameId++;
   gameTime += dt;
+  geminiCoachClock -= dt;
+  if (geminiCoachClock <= 0) {
+    geminiCoachClock = 0.5;
+    window.FCGeminiCoach?.tick?.(geminiCoachSnapshot());
+  }
   allyFireReports.forEach((report) => {
     report.ttl -= dt;
   });
