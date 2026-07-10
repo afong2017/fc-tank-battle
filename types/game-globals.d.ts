@@ -34,6 +34,7 @@ interface Tank extends RectLike {
   attackRoute: PointLike[] | null;
   attackRouteTarget: Tank | null;
   attackRouteMode: string | null;
+  midlineRecorded: boolean;
   box(): RectLike;
 }
 
@@ -112,6 +113,9 @@ interface GeminiCoachAdvice {
   reason: string;
   model?: string;
   expiresAt: number;
+  requestedAt?: number;
+  receivedAt?: number;
+  latencyMs?: number;
 }
 
 interface FCGeminiCoach {

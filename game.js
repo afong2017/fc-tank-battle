@@ -869,7 +869,7 @@ let p1Idle = 0;
 let p1Auto = false;
 let p2Human = false;
 let baseDangerClock = 0;
-let midlineBreakClock = 0;
+let lastGeminiAdviceSeen = null;
 let hiddenTimer = null;
 let trainingRestartTimer = null;
 let trainingAutoArmed = sessionStorage.getItem(TRAINING_AUTO_ARMED_KEY) === "1";
@@ -1007,6 +1007,7 @@ function makeTank(kind, x, y) {
     turnCooldown: 0,
     moveFrameId: -1,
     moveFrameDistance: 0,
+    midlineRecorded: false,
     invuln: enemy ? 0 : 1.8,
     box() {
       return { x: this.x, y: this.y, w: this.w, h: this.h };
@@ -1586,11 +1587,32 @@ function routeLengthOf(tank) {
 }
 
 function recordAiExperience(type, detail = {}) {
+  const advice = window.FCGeminiCoach?.current?.() || null;
+  const tankKind = (detail.tank || detail.ally)?.kind;
+  const coachRole = tankKind === "player" ? advice?.p1Role : tankKind === "player2" ? advice?.p2Role : null;
   window.TankPartnerAI?.recordExperience?.(type, {
     stage: stageIndex + 1,
     time: gameTime,
+    coachRole,
+    coachLane: advice?.focusLane || null,
+    coachRule: advice?.targetRule || null,
+    coachLatencyMs: advice?.latencyMs ?? null,
     ...detail,
   });
+}
+
+function allyDeathReason(tank, bullet) {
+  if (!bullet.owner?.enemy) return "friendly_fire";
+  const mode = tank.attackRouteMode || "";
+  if (/dodge|avoid-bullet/.test(mode)) return "dodge_failed";
+  const shooter = bullet.owner;
+  const distance = Math.abs(centerOf(tank).x - centerOf(shooter).x) + Math.abs(centerOf(tank).y - centerOf(shooter).y);
+  if (distance < TILE * 4.5) return "close_combat_loss";
+  const faceToFace = (bullet.dir === "up" && tank.dir === "down")
+    || (bullet.dir === "down" && tank.dir === "up")
+    || (bullet.dir === "left" && tank.dir === "right")
+    || (bullet.dir === "right" && tank.dir === "left");
+  return faceToFace ? "duel_lost" : "exposed_lane";
 }
 
 function randomEnemySpawnPoint(kind) {
@@ -1849,7 +1871,7 @@ function hitTank(tank, bullet) {
       target: tank.attackTarget,
       routeLength: routeLengthOf(tank),
       bulletDir: bullet.dir,
-      reason: bullet.owner?.enemy ? "dodge_failed" : "friendly_fire",
+      reason: allyDeathReason(tank, bullet),
       mode: tank.attackRouteMode || null,
     });
     teachAis(tank.kind === "player" ? "ally-hit" : "self-hit", -1);
@@ -2531,6 +2553,15 @@ function update(dt) {
     geminiCoachClock = 0.5;
     window.FCGeminiCoach?.tick?.(geminiCoachSnapshot());
   }
+  const geminiAdvice = window.FCGeminiCoach?.current?.() || null;
+  if (geminiAdvice && geminiAdvice !== lastGeminiAdviceSeen) {
+    lastGeminiAdviceSeen = geminiAdvice;
+    recordAiExperience("gemini_advice", {
+      reason: `${geminiAdvice.p1Role}:${geminiAdvice.p2Role}`,
+      mode: `gemini:${geminiAdvice.focusLane}:${geminiAdvice.targetRule}`,
+      coachLatencyMs: geminiAdvice.latencyMs,
+    });
+  }
   allyFireReports.forEach((report) => {
     report.ttl -= dt;
   });
@@ -2572,26 +2603,23 @@ function update(dt) {
     teachAis("base-danger", 0.45);
     baseDangerClock = 2;
   }
-  midlineBreakClock -= dt;
-  if (midlineBreakClock <= 0) {
-    const midline = canvas.height * 0.5;
-    const breached = enemies
-      .filter((enemy) => visibleEnemyForAlly(enemy) && centerOf(enemy).y >= midline)
-      .sort((a, b) => Math.abs(a.x - baseRect.x) + Math.abs(a.y - baseRect.y) - (Math.abs(b.x - baseRect.x) + Math.abs(b.y - baseRect.y)))[0];
-    if (breached) {
-      const nearestAlly = [player, player2]
-        .filter((tank) => tank?.alive)
-        .sort((a, b) => Math.abs(a.x - breached.x) + Math.abs(a.y - breached.y) - (Math.abs(b.x - breached.x) + Math.abs(b.y - breached.y)))[0] || null;
-      recordAiExperience("enemy_cross_midline", {
-        enemy: breached,
-        ally: nearestAlly,
-        target: nearestAlly?.attackTarget,
-        routeLength: routeLengthOf(nearestAlly),
-        timelyReturn: Boolean(nearestAlly?.attackTarget === breached || nearestAlly?.lockedBaseTarget === breached),
-        mode: nearestAlly?.attackRouteMode || null,
-      });
-      midlineBreakClock = 2.5;
-    }
+  const midline = canvas.height * 0.5;
+  const breached = enemies
+    .filter((enemy) => !enemy.midlineRecorded && visibleEnemyForAlly(enemy) && centerOf(enemy).y >= midline)
+    .sort((a, b) => Math.abs(a.x - baseRect.x) + Math.abs(a.y - baseRect.y) - (Math.abs(b.x - baseRect.x) + Math.abs(b.y - baseRect.y)))[0];
+  if (breached) {
+    breached.midlineRecorded = true;
+    const nearestAlly = [player, player2]
+      .filter((tank) => tank?.alive)
+      .sort((a, b) => Math.abs(a.x - breached.x) + Math.abs(a.y - breached.y) - (Math.abs(b.x - breached.x) + Math.abs(b.y - breached.y)))[0] || null;
+    recordAiExperience("enemy_cross_midline", {
+      enemy: breached,
+      ally: nearestAlly,
+      target: nearestAlly?.attackTarget,
+      routeLength: routeLengthOf(nearestAlly),
+      timelyReturn: Boolean(nearestAlly?.attackTarget === breached || nearestAlly?.lockedBaseTarget === breached),
+      mode: nearestAlly?.attackRouteMode || null,
+    });
   }
   freezeClock = Math.max(0, freezeClock - dt);
   if (freezeClock <= 0) {

@@ -45,6 +45,7 @@
   async function tick(snapshot) {
     if (!/^https?:$/.test(location.protocol) || busy || Date.now() < nextRequestAt) return;
     busy = true;
+    const requestedAt = Date.now();
     status = "THINK";
     renderStatus();
     const controller = new AbortController();
@@ -60,7 +61,15 @@
       if (!response.ok) throw new Error(String(response.status));
       const result = await response.json();
       const ttl = Math.max(2, Math.min(8, Number(result.advice?.ttlSeconds) || 4));
-      advice = { ...result.advice, model: result.model || "Gemini", expiresAt: Date.now() + ttl * 1000 };
+      const receivedAt = Date.now();
+      advice = {
+        ...result.advice,
+        model: result.model || "Gemini",
+        requestedAt,
+        receivedAt,
+        latencyMs: receivedAt - requestedAt,
+        expiresAt: receivedAt + ttl * 1000,
+      };
       model = result.model || model;
       status = "LIVE";
       renderStatus();

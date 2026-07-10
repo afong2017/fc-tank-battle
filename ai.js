@@ -196,11 +196,17 @@
       };
     }
     const active = typeof saved?.active === "string" ? saved.active : "base";
-    const saturated = Object.values(genes).filter((gene) => gene.value > 0.93).length >= Object.keys(genes).length - 1
-      && Object.values(genes).every((gene) => gene.score < -1.5 || gene.trials > 40);
-    if (saturated) {
+    const geneValues = Object.values(genes);
+    const saturated = geneValues.filter((gene) => gene.value > 0.93).length >= Object.keys(genes).length - 1
+      && geneValues.every((gene) => gene.score < -1.5 || gene.trials > 40);
+    const collapsed = geneValues.filter((gene) => gene.value <= 0.13).length >= Object.keys(genes).length - 1
+      && geneValues.every((gene) => gene.score < -1.5 && gene.trials > 40);
+    if (saturated || collapsed) {
       for (const [name, defaults] of Object.entries(DEFAULT_STRATEGY_GENES)) {
-        genes[name].value = clamp((genes[name].value + defaults.value) / 2, 0.12, 0.96);
+        genes[name].value = collapsed
+          ? defaults.value
+          : clamp((genes[name].value + defaults.value) / 2, 0.12, 0.96);
+        genes[name].score *= 0.25;
       }
     }
     return {
@@ -661,6 +667,10 @@
       misread: Boolean(detail.misread),
       timelyReturn: detail.timelyReturn ?? null,
       staleSeconds: detail.staleSeconds ? Math.round(detail.staleSeconds * 10) / 10 : null,
+      coachRole: detail.coachRole || null,
+      coachLane: detail.coachLane || null,
+      coachRule: detail.coachRule || null,
+      coachLatencyMs: Number.isFinite(detail.coachLatencyMs) ? Math.round(detail.coachLatencyMs) : null,
     };
     data.events.push(event);
     data.events = data.events.slice(-EXPERIENCE_JSON_EVENT_LIMIT);
@@ -700,7 +710,7 @@
   }
 
   function rankFailures(counters = {}) {
-    return Object.keys(counters)
+    return Object.keys(FAILURE_TO_WEIGHT)
       .filter((key) => key !== "enemy_killed" && counters[key] > 0)
       .sort((a, b) => counters[b] - counters[a])
       .slice(0, 4);
