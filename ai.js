@@ -2427,6 +2427,20 @@
       .map((c) => ({ x: c.x * TILE + 2, y: c.y * TILE + 2, w: 28, h: 28 }));
   }
 
+  function balancedCombatGoals(ctx, tank, target, name) {
+    if (!target?.alive) return [];
+    const threat = baseThreatScore(ctx, target);
+    const baseDistance = dist(target, ctx.base);
+    const urgent = threat > 14 || baseDistance < TILE * 11;
+    const firing = shootingPositionGoals(ctx, tank, target, name);
+    const chase = directChaseGoals(ctx, target);
+    const intercept = interceptGoals(ctx, target, name);
+    if (urgent) {
+      return [...firing.slice(0, 12), ...intercept.slice(0, 18), ...chase];
+    }
+    return [...chase, ...firing.slice(0, 10), ...intercept.slice(0, 8)];
+  }
+
   function firingProfile(ctx, goalCell, targetCell) {
     if (goalCell.x !== targetCell.x && goalCell.y !== targetCell.y) {
       return { viable: false, rank: 9 };
@@ -3595,8 +3609,10 @@
           return commit(ctx, { dir: shot, fire: true, hold: true, mode: "base-nearest-hunt-fire", target: baseNearestTarget }, dt);
         }
         ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
-        const goals = directChaseGoals(ctx, baseNearestTarget);
-        const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, "attack") || directionTo(tank, baseNearestTarget);
+        const targetThreat = baseThreatScore(ctx, baseNearestTarget);
+        const intercepting = targetThreat > 14 || dist(baseNearestTarget, ctx.base) < TILE * 11;
+        const goals = balancedCombatGoals(ctx, tank, baseNearestTarget, name);
+        const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, intercepting ? "intercept" : "attack") || directionTo(tank, baseNearestTarget);
         lastMode = "base-nearest-hunt";
         if (ctx.routeNeedsClear && ctx.canFire?.()) {
           lastMode = "base-nearest-hunt-clear";
