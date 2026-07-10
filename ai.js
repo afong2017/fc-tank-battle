@@ -2271,6 +2271,25 @@
     };
   }
 
+  function firstStageBasePocketGoals(ctx, tank, target) {
+    if (Number(ctx.stage) !== 1 || !target?.alive) return [];
+    const baseCell = cellOf(ctx.base, ctx.cols, ctx.rows);
+    const tankCell = cellOf(tank, ctx.cols, ctx.rows);
+    const targetCell = cellOf(target, ctx.cols, ctx.rows);
+    if (targetCell.y < baseCell.y - 2 || tankCell.y >= targetCell.y) return [];
+
+    const targetOnLeft = ctx.basePocketSide === "left" || (ctx.basePocketSide !== "right" && targetCell.x < baseCell.x);
+    const sideX = targetOnLeft ? baseCell.x - 5 : baseCell.x + 3;
+    const upperGateY = baseCell.y - 5;
+    const lowerGateY = baseCell.y - 2;
+    const gateY = tankCell.y <= upperGateY ? upperGateY : lowerGateY;
+    const searchX = targetOnLeft ? [sideX, sideX - 1, sideX + 1] : [sideX, sideX + 1, sideX - 1];
+    const gate = searchX
+      .map((x) => ({ x, y: gateY }))
+      .find((cell) => walkable(ctx, cell.x, cell.y));
+    return gate ? [{ x: gate.x * TILE + 2, y: gate.y * TILE + 2, w: 28, h: 28 }] : [];
+  }
+
   function spawnThreat(ctx, tank, name) {
     const spawn = spawnPoint(ctx, name);
     const lowerLine = ((ctx.rows || 24) - 7) * TILE;
@@ -3401,9 +3420,12 @@
     }
 
     const face = directionTo(tank, target);
-    const rawGoals = distance < TILE * 3.2
-      ? directChaseGoals(ctx, target)
-      : meleeInterceptGoals(ctx, target);
+    const pocketGoals = firstStageBasePocketGoals(ctx, tank, target);
+    const rawGoals = pocketGoals.length
+      ? pocketGoals
+      : distance < TILE * 3.2
+        ? directChaseGoals(ctx, target)
+        : meleeInterceptGoals(ctx, target);
     const tankCell = cellOf(tank, ctx.cols, ctx.rows);
     const goals = rawGoals.filter((goal) => {
       const cell = cellOf(goal, ctx.cols, ctx.rows);
@@ -3579,6 +3601,8 @@
     let thinkCooldown = 0;
     let lastAction = null;
     let lastUrgencyKey = "";
+    let basePocketSide = null;
+    let basePocketTarget = null;
 
     function learn(event, amount = 1) {
       const weights = memory.weights;
@@ -3803,6 +3827,24 @@
       const urgentFreeze = urgentFreezeBonus(ctx, tank);
       const bonus = !scan.emergency && !visibleBasePressure ? nearbyBonus(ctx, tank) : null;
       const baseNearestTarget = baseApproachTarget(ctx);
+      const baseCell = cellOf(ctx.base, ctx.cols, ctx.rows);
+      const tankCell = cellOf(tank, ctx.cols, ctx.rows);
+      const pocketTargetCell = baseNearestTarget ? cellOf(baseNearestTarget, ctx.cols, ctx.rows) : null;
+      const pocketActive = Number(ctx.stage) === 1
+        && baseNearestTarget?.alive
+        && pocketTargetCell.y >= baseCell.y - 2
+        && tankCell.y < pocketTargetCell.y;
+      if (pocketActive) {
+        if (basePocketTarget !== baseNearestTarget || !basePocketSide) {
+          basePocketTarget = baseNearestTarget;
+          basePocketSide = pocketTargetCell.x < baseCell.x ? "left" : "right";
+        }
+        ctx.basePocketSide = basePocketSide;
+      } else {
+        basePocketSide = null;
+        basePocketTarget = null;
+        ctx.basePocketSide = null;
+      }
       const intruder = baseIntruder(ctx, name);
       const anchorThreat = baseAnchorThreat(ctx);
       const laneThreat = baseFireLaneThreat(ctx);
@@ -3879,7 +3921,8 @@
         const targetThreat = baseThreatScore(ctx, baseNearestTarget);
         const coachRole = name === "1P" ? ctx.coachAdvice?.p1Role : ctx.coachAdvice?.p2Role;
         const intercepting = coachRole === "intercept" || targetThreat > 14 || dist(baseNearestTarget, ctx.base) < TILE * 11;
-        const goals = balancedCombatGoals(ctx, tank, baseNearestTarget, name);
+        const pocketGoals = firstStageBasePocketGoals(ctx, tank, baseNearestTarget);
+        const goals = pocketGoals.length ? pocketGoals : balancedCombatGoals(ctx, tank, baseNearestTarget, name);
         const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, intercepting ? "intercept" : "attack") || directionTo(tank, baseNearestTarget);
         lastMode = "base-nearest-hunt";
         if (ctx.routeNeedsClear && ctx.canFire?.()) {
