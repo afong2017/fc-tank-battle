@@ -2178,7 +2178,13 @@ function collectBonuses(dt) {
       b.dead = true;
       if (collector.kind === "player2") score2 += 500;
       else score += 500;
-      if (b.type === "freeze") freezeClock = 5;
+      if (b.type === "freeze") {
+        freezeClock = 5;
+        recordAiExperience("freeze_collected", {
+          tank: collector,
+          mode: "freeze-active",
+        });
+      }
       sfx.power();
     }
   }
@@ -2475,7 +2481,6 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
     moveTank(tank, tank.escapeDir, dt);
     tank.escapeTime = Math.max(0, tank.escapeTime - dt);
   } else if (autoControlled && ai) {
-    const freezeAssault = freezeClock > 0.05;
     const effectiveReservedTargets = reservedTargets;
     const context = aiContext(tank, effectiveReservedTargets, ai.memory?.weights || null);
     action = ai.decide(context, dt);

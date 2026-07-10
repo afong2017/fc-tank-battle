@@ -1767,6 +1767,15 @@
   function nearFreezeBonus(ctx, tank) {
     return (ctx.bonuses || [])
       .filter((bonus) => bonus.type === "freeze" && !bonus.dead && bonus.ttl > 0 && dist(tank, bonus) <= TILE * 5.2)
+      .filter((bonus) => {
+        const ownDistance = dist(tank, bonus);
+        return !(ctx.friends || []).some((friend) => {
+          if (!friend?.alive) return false;
+          const friendDistance = dist(friend, bonus);
+          if (friendDistance + TILE * 0.35 < ownDistance) return true;
+          return tank.kind === "player2" && friend.kind === "player" && Math.abs(friendDistance - ownDistance) <= TILE * 0.35;
+        });
+      })
       .map((bonus) => {
         const route = routeDistanceToPoint(ctx, tank, bonus, false);
         return { bonus, route, direct: dist(tank, bonus) };
@@ -3668,43 +3677,11 @@
         return commit(ctx, emergencyDodge, dt);
       }
 
-      if (closeFreeze && scan.bulletRisk < 7.5) {
+      if (closeFreeze) {
         const dir = routeDir(ctx, tank, [closeFreeze], closeFreeze, "bonus");
         lastMode = "near-freeze";
         return commit(ctx, { dir, fire: false, hold: false, mode: "near-freeze" }, dt);
       }
-      const immediateMeleeTarget = scan.closeCombatTarget || (anchorThreat && dist(tank, anchorThreat) < TILE * 8.6 ? anchorThreat : null);
-      const immediateMeleeAction = closeCombatAction(ctx, tank, immediateMeleeTarget, name);
-      if (immediateMeleeAction) {
-        lastMode = immediateMeleeAction.mode;
-        return commit(ctx, immediateMeleeAction, dt);
-      }
-      const immediateAttack = attackOpportunityAction(ctx, tank, baseNearestTarget, name);
-      if (immediateAttack) {
-        lastMode = immediateAttack.mode;
-        return commit(ctx, immediateAttack, dt);
-      }
-      if (baseNearestTarget) {
-        const shot = safeShotDir(ctx, tank, baseNearestTarget) || shotDir(ctx, tank, baseNearestTarget);
-        const closeAssault = dist(tank, baseNearestTarget) < TILE * 8.5;
-        if (shot && ctx.canFire?.() && scan.bulletRisk < (closeAssault ? 12.5 : 8.8)) {
-          lastMode = "base-nearest-hunt-fire";
-          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "base-nearest-hunt-fire", target: baseNearestTarget }, dt);
-        }
-        ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
-        const targetThreat = baseThreatScore(ctx, baseNearestTarget);
-        const coachRole = name === "1P" ? ctx.coachAdvice?.p1Role : ctx.coachAdvice?.p2Role;
-        const intercepting = coachRole === "intercept" || targetThreat > 14 || dist(baseNearestTarget, ctx.base) < TILE * 11;
-        const goals = balancedCombatGoals(ctx, tank, baseNearestTarget, name);
-        const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, intercepting ? "intercept" : "attack") || directionTo(tank, baseNearestTarget);
-        lastMode = "base-nearest-hunt";
-        if (ctx.routeNeedsClear && ctx.canFire?.()) {
-          lastMode = "base-nearest-hunt-clear";
-          return commit(ctx, { dir, fire: true, hold: true, mode: "base-nearest-hunt-clear", target: baseNearestTarget }, dt);
-        }
-        return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
-      }
-
       const freezeTarget = freezeAssaultTarget(ctx, tank, name);
       if (freezeTarget) {
         const freezeBasePressure = baseThreatScore(ctx, freezeTarget) > 12 || dist(freezeTarget, ctx.base) < TILE * 12;
@@ -3737,6 +3714,37 @@
           return commit(ctx, { dir, fire: true, hold: true, mode: "freeze-assault-clear", target: freezeTarget }, dt);
         }
         return commit(ctx, { dir, fire: false, hold: false, mode: "freeze-assault", target: freezeTarget }, dt);
+      }
+      const immediateMeleeTarget = scan.closeCombatTarget || (anchorThreat && dist(tank, anchorThreat) < TILE * 8.6 ? anchorThreat : null);
+      const immediateMeleeAction = closeCombatAction(ctx, tank, immediateMeleeTarget, name);
+      if (immediateMeleeAction) {
+        lastMode = immediateMeleeAction.mode;
+        return commit(ctx, immediateMeleeAction, dt);
+      }
+      const immediateAttack = attackOpportunityAction(ctx, tank, baseNearestTarget, name);
+      if (immediateAttack) {
+        lastMode = immediateAttack.mode;
+        return commit(ctx, immediateAttack, dt);
+      }
+      if (baseNearestTarget) {
+        const shot = safeShotDir(ctx, tank, baseNearestTarget) || shotDir(ctx, tank, baseNearestTarget);
+        const closeAssault = dist(tank, baseNearestTarget) < TILE * 8.5;
+        if (shot && ctx.canFire?.() && scan.bulletRisk < (closeAssault ? 12.5 : 8.8)) {
+          lastMode = "base-nearest-hunt-fire";
+          return commit(ctx, { dir: shot, fire: true, hold: true, mode: "base-nearest-hunt-fire", target: baseNearestTarget }, dt);
+        }
+        ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
+        const targetThreat = baseThreatScore(ctx, baseNearestTarget);
+        const coachRole = name === "1P" ? ctx.coachAdvice?.p1Role : ctx.coachAdvice?.p2Role;
+        const intercepting = coachRole === "intercept" || targetThreat > 14 || dist(baseNearestTarget, ctx.base) < TILE * 11;
+        const goals = balancedCombatGoals(ctx, tank, baseNearestTarget, name);
+        const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, intercepting ? "intercept" : "attack") || directionTo(tank, baseNearestTarget);
+        lastMode = "base-nearest-hunt";
+        if (ctx.routeNeedsClear && ctx.canFire?.()) {
+          lastMode = "base-nearest-hunt-clear";
+          return commit(ctx, { dir, fire: true, hold: true, mode: "base-nearest-hunt-clear", target: baseNearestTarget }, dt);
+        }
+        return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
       }
 
       if (executeTarget && !freezeTarget) {
