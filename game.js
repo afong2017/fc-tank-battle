@@ -2025,7 +2025,7 @@ function aiShotSafe(tank, action = {}) {
   if (shotFacesBaseGuard(tank, tank.dir)) {
     return firstHitIsTargetEnemy(tank, tank.dir, action.target);
   }
-  if (action.target?.alive && (action.mode === "attack" || action.mode === "defend" || action.mode?.includes("duel"))) {
+  if (action.target?.alive && !action.mode?.includes("clear")) {
     return (hit.type === "enemy" && hit.target === action.target) || aiCanHitTarget(tank, tank.dir, action.target);
   }
   if (action.mode?.includes("clear")) {

@@ -2940,6 +2940,32 @@
     return null;
   }
 
+  function attackOpportunityAction(ctx, tank, preferredTarget, name) {
+    if (!ctx.canFire?.()) return null;
+    const risk = bulletRisk(tank, ctx.bullets || [], true) + allyRadioRisk(tank, ctx.allyFireReports || []);
+    if (risk > 9.5) return null;
+    const candidates = [preferredTarget, ...(ctx.enemies || [])]
+      .filter((enemy, index, list) => enemy?.alive && list.indexOf(enemy) === index)
+      .filter((enemy) => visibleEnemy(ctx, enemy) && eligibleSideTarget(ctx, enemy, name))
+      .filter((enemy) => !reservedTarget(ctx, enemy) || canShareTarget(ctx, enemy, tank))
+      .map((enemy) => {
+        const certain = safeShotDir(ctx, tank, enemy);
+        const dir = certain || shotDir(ctx, tank, enemy);
+        if (!dir || sideLaneShotTooEarly(ctx, tank, enemy, dir)) return null;
+        const distance = dist(tank, enemy);
+        const preferred = enemy === preferredTarget ? 1800 : 0;
+        const close = Math.max(0, TILE * 8 - distance) * 5;
+        const basePressure = baseThreatScore(ctx, enemy) * 24;
+        const facing = dir === tank.dir ? 520 : 0;
+        return { enemy, dir, score: preferred + close + basePressure + facing + (certain ? 900 : 0) };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score);
+    const best = candidates[0];
+    if (!best) return null;
+    return { dir: best.dir, fire: true, hold: true, mode: "precision-attack-fire", target: best.enemy };
+  }
+
   function longRangeShot(ctx, tank, name) {
     if (!ctx.canFire?.()) return null;
     const currentRisk = bulletRisk(tank, ctx.bullets || [], true) + allyRadioRisk(tank, ctx.allyFireReports || []);
@@ -3469,6 +3495,15 @@
         .map((enemy) => `${Math.round(centerX(enemy) / 16)},${Math.round(centerY(enemy) / 16)}`)
         .sort()
         .join(";");
+      const shotOpportunitySignature = (ctx.enemies || [])
+        .filter((enemy) => enemy?.alive && visibleEnemy(ctx, enemy))
+        .map((enemy) => {
+          const dir = safeShotDir(ctx, ctx.tank, enemy) || shotDir(ctx, ctx.tank, enemy);
+          return dir ? `${Math.round(centerX(enemy) / 16)},${Math.round(centerY(enemy) / 16)},${dir}` : null;
+        })
+        .filter(Boolean)
+        .sort()
+        .join(";");
       const urgentKey = [
         Math.round((ctx.tank?.x || 0) / 16),
         Math.round((ctx.tank?.y || 0) / 16),
@@ -3476,6 +3511,7 @@
         Math.round((ctx.base?.y || 0) / 32),
         (ctx.enemies || []).filter((enemy) => enemy?.alive && dist(enemy, ctx.base) < TILE * 10).length,
         nearbyEnemySignature,
+        shotOpportunitySignature,
         (ctx.bullets || []).filter((bullet) => bullet?.enemy && dist(bullet, ctx.tank) < TILE * 6).length,
         (ctx.bonuses || []).filter((bonus) => bonus.type === "freeze" && !bonus.dead && bonus.ttl > 0 && dist(ctx.tank, bonus) <= TILE * 5.8).length,
         ctx.mapVersion || 0,
@@ -3545,6 +3581,11 @@
       if (immediateMeleeAction) {
         lastMode = immediateMeleeAction.mode;
         return commit(ctx, immediateMeleeAction, dt);
+      }
+      const immediateAttack = attackOpportunityAction(ctx, tank, baseNearestTarget, name);
+      if (immediateAttack) {
+        lastMode = immediateAttack.mode;
+        return commit(ctx, immediateAttack, dt);
       }
       if (baseNearestTarget) {
         const shot = safeShotDir(ctx, tank, baseNearestTarget) || shotDir(ctx, tank, baseNearestTarget);
