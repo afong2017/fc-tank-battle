@@ -1152,7 +1152,27 @@
     return ctx.canMove ? ctx.canMove(dir) : true;
   }
 
-  function incomingBullet(tank, bullets) {
+  function bulletPathClear(ctx, tank, bullet) {
+    if (!ctx?.tileAt || !bullet) return true;
+    const d = DIRS[bullet.dir];
+    if (!d) return false;
+    const alongDistance = bullet.dir === "up" || bullet.dir === "down"
+      ? Math.abs(centerY(tank) - centerY(bullet))
+      : Math.abs(centerX(tank) - centerX(bullet));
+    let x = centerX(bullet);
+    let y = centerY(bullet);
+    for (let traveled = 12; traveled < alongDistance - 18; traveled += 12) {
+      x += d.x * 12;
+      y += d.y * 12;
+      const tileX = Math.floor(x / TILE);
+      const tileY = Math.floor(y / TILE);
+      const tile = ctx.tileAt(tileX, tileY);
+      if (tile === "B" || tile === "S" || tile === "W" || tile === "E") return false;
+    }
+    return true;
+  }
+
+  function incomingBullet(tank, bullets, ctx = null) {
     let best = null;
     let bestRisk = 0;
     for (const b of bullets) {
@@ -1160,13 +1180,19 @@
       const dx = Math.abs(centerX(tank) - centerX(b));
       const dy = Math.abs(centerY(tank) - centerY(b));
       let risk = 0;
-      if ((b.dir === "up" || b.dir === "down") && dx < 64) {
+      if ((b.dir === "up" || b.dir === "down") && dx < 34) {
         const coming = b.dir === "up" ? centerY(b) > centerY(tank) : centerY(b) < centerY(tank);
-        if (coming) risk = Math.max(0, 620 - dy) + Math.max(0, 64 - dx) * 5.2;
+        if (coming && bulletPathClear(ctx, tank, b)) {
+          const eta = dy / Math.max(1, b.speed || 230);
+          if (eta < 3.9) risk = Math.max(0, 3.9 - eta) * 180 + Math.max(0, 34 - dx) * 8;
+        }
       }
-      if ((b.dir === "left" || b.dir === "right") && dy < 64) {
+      if ((b.dir === "left" || b.dir === "right") && dy < 34) {
         const coming = b.dir === "left" ? centerX(b) > centerX(tank) : centerX(b) < centerX(tank);
-        if (coming) risk = Math.max(0, 620 - dx) + Math.max(0, 64 - dy) * 5.2;
+        if (coming && bulletPathClear(ctx, tank, b)) {
+          const eta = dx / Math.max(1, b.speed || 230);
+          if (eta < 3.9) risk = Math.max(0, 3.9 - eta) * 180 + Math.max(0, 34 - dy) * 8;
+        }
       }
       if (risk > bestRisk) {
         best = b;
@@ -1315,11 +1341,17 @@
     const dy = Math.abs(centerY(box) - centerY(bullet));
     if ((bullet.dir === "up" || bullet.dir === "down") && dx < 28) {
       const coming = bullet.dir === "up" ? centerY(bullet) >= centerY(box) - 10 : centerY(bullet) <= centerY(box) + 10;
-      if (coming) return Math.max(0, 280 - dy) / 8 + Math.max(0, 28 - dx) * 1.6;
+      if (coming) {
+        const proximity = Math.max(0, 1 - dy / 520);
+        return (Math.max(0, 280 - dy) / 8 + Math.max(0, 28 - dx) * 1.6) * proximity * proximity;
+      }
     }
     if ((bullet.dir === "left" || bullet.dir === "right") && dy < 28) {
       const coming = bullet.dir === "left" ? centerX(bullet) >= centerX(box) - 10 : centerX(bullet) <= centerX(box) + 10;
-      if (coming) return Math.max(0, 280 - dx) / 8 + Math.max(0, 28 - dy) * 1.6;
+      if (coming) {
+        const proximity = Math.max(0, 1 - dx / 520);
+        return (Math.max(0, 280 - dx) / 8 + Math.max(0, 28 - dy) * 1.6) * proximity * proximity;
+      }
     }
     return 0;
   }
@@ -1623,7 +1655,7 @@
   }
 
   function closeAttackerTarget(ctx, tank) {
-    const incoming = incomingBullet(tank, ctx.bullets || []);
+    const incoming = incomingBullet(tank, ctx.bullets || [], ctx);
     const shooter = incoming?.owner;
     if (visibleEnemy(ctx, shooter) && dist(tank, shooter) < TILE * 6.8) return shooter;
 
@@ -1856,7 +1888,7 @@
     const closeCombatTarget = forced ? null : closeAttackerTarget(ctx, tank) || immediateEnemy(ctx, tank, name);
     const enemyTarget = forced || nearestBaseEnemy(ctx) || bestEnemy(ctx, tank, name);
     const radioBullet = incomingAllyRadio(tank, ctx.allyFireReports || []);
-    const bullet = incomingBullet(tank, ctx.bullets || []) || incomingFriendlyBullet(tank, ctx.bullets || []) || radioBullet;
+    const bullet = incomingBullet(tank, ctx.bullets || [], ctx) || incomingFriendlyBullet(tank, ctx.bullets || []) || radioBullet;
     const currentBulletRisk = bulletRisk(tank, ctx.bullets || [], true) + allyRadioRisk(tank, ctx.allyFireReports || []);
     return {
       threats,
@@ -3275,7 +3307,7 @@
     if (!nearEnough) return null;
 
     const risk = bulletRisk(tank, ctx.bullets || [], true);
-    const bullet = incomingBullet(tank, ctx.bullets || []) || incomingFriendlyBullet(tank, ctx.bullets || []);
+    const bullet = incomingBullet(tank, ctx.bullets || [], ctx) || incomingFriendlyBullet(tank, ctx.bullets || []);
     const surviveFirst = hasDirective(ctx, "MELEE_SURVIVE_FIRST") || (ctx.adaptive?.dodgePressure || 0) > 0.35;
     const mustDuel = mustDuelShotDir(ctx, tank, target);
     if (mustDuel) {
@@ -3529,7 +3561,7 @@
         : action.mode === "near-freeze" || action.mode === "urgent-freeze" ? 16
         : /midline|intercept|defend|base-anchor|base-assault/.test(action.mode || "") ? 14 : 9;
       if (action.dir && !action.fire && action.mode !== "dodge" && isMoveIntoEnemyBullet(ctx.tank, action.dir, ctx.bullets || [], actionBulletThreshold)) {
-        const bullet = incomingBullet(ctx.tank, ctx.bullets || []);
+        const bullet = incomingBullet(ctx.tank, ctx.bullets || [], ctx);
         const escape = bullet ? dodgeDir(ctx, ctx.tank, bullet) : null;
         action = escape && !isMoveIntoEnemyBullet(ctx.tank, escape, ctx.bullets || [], actionBulletThreshold)
           ? { ...action, dir: escape, hold: false, mode: `${action.mode || "move"}-avoid-bullet` }
@@ -3656,7 +3688,7 @@
         .filter(Boolean)
         .sort()
         .join(";");
-      const incomingThreat = incomingBullet(ctx.tank, ctx.bullets || []);
+      const incomingThreat = incomingBullet(ctx.tank, ctx.bullets || [], ctx);
       const incomingShooter = incomingThreat?.owner;
       const incomingThreatSignature = incomingThreat
         ? [
