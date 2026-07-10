@@ -1622,6 +1622,29 @@
       .sort((a, b) => b.score - a.score)[0]?.enemy || null;
   }
 
+  function closeAttackerTarget(ctx, tank) {
+    const incoming = incomingBullet(tank, ctx.bullets || []);
+    const shooter = incoming?.owner;
+    if (visibleEnemy(ctx, shooter) && dist(tank, shooter) < TILE * 6.8) return shooter;
+
+    return (ctx.enemies || [])
+      .filter((enemy) => visibleEnemy(ctx, enemy) && dist(tank, enemy) < TILE * 4.8)
+      .map((enemy) => {
+        const distance = dist(tank, enemy);
+        const aimingAtTank = threatLine(enemy, tank, 52);
+        const faceToFace = aimingAtTank && threatLine(tank, enemy, 52);
+        const lineShot = shotDir(ctx, tank, enemy);
+        let score = -distance * 8;
+        if (aimingAtTank) score += 4200;
+        if (faceToFace) score += 1800;
+        if (lineShot) score += 700;
+        if (enemy === shooter) score += 10000;
+        return { enemy, score, urgent: enemy === shooter || aimingAtTank || distance < TILE * 2.8 };
+      })
+      .filter((item) => item.urgent)
+      .sort((a, b) => b.score - a.score || dist(tank, a.enemy) - dist(tank, b.enemy))[0]?.enemy || null;
+  }
+
   function routeDistanceToTarget(ctx, tank, target) {
     if (!ctx._routeDistanceCache) ctx._routeDistanceCache = new Map();
     const tankCell = cellOf(tank, ctx.cols, ctx.rows);
@@ -1830,7 +1853,7 @@
     const eligibleThreat = threats.find((item) => eligibleSideTarget(ctx, item.enemy, name));
     const sideUrgent = urgent && eligibleSideTarget(ctx, urgent, name) ? urgent : null;
     const baseTarget = forced || sideUrgent || (eligibleThreat && (eligibleThreat.rawScore ?? eligibleThreat.score) > emergencyThreshold ? eligibleThreat.enemy : null);
-    const closeCombatTarget = forced ? null : immediateEnemy(ctx, tank, name);
+    const closeCombatTarget = forced ? null : closeAttackerTarget(ctx, tank) || immediateEnemy(ctx, tank, name);
     const enemyTarget = forced || nearestBaseEnemy(ctx) || bestEnemy(ctx, tank, name);
     const radioBullet = incomingAllyRadio(tank, ctx.allyFireReports || []);
     const bullet = incomingBullet(tank, ctx.bullets || []) || incomingFriendlyBullet(tank, ctx.bullets || []) || radioBullet;
@@ -3610,6 +3633,17 @@
         .filter(Boolean)
         .sort()
         .join(";");
+      const incomingThreat = incomingBullet(ctx.tank, ctx.bullets || []);
+      const incomingShooter = incomingThreat?.owner;
+      const incomingThreatSignature = incomingThreat
+        ? [
+            Math.round(centerX(incomingThreat) / 12),
+            Math.round(centerY(incomingThreat) / 12),
+            incomingThreat.dir,
+            visibleEnemy(ctx, incomingShooter) ? Math.round(centerX(incomingShooter) / 16) : "x",
+            visibleEnemy(ctx, incomingShooter) ? Math.round(centerY(incomingShooter) / 16) : "x",
+          ].join(",")
+        : "";
       const urgentKey = [
         Math.round((ctx.tank?.x || 0) / 16),
         Math.round((ctx.tank?.y || 0) / 16),
@@ -3618,6 +3652,7 @@
         (ctx.enemies || []).filter((enemy) => enemy?.alive && dist(enemy, ctx.base) < TILE * 10).length,
         nearbyEnemySignature,
         shotOpportunitySignature,
+        incomingThreatSignature,
         (ctx.bullets || []).filter((bullet) => bullet?.enemy && dist(bullet, ctx.tank) < TILE * 6).length,
         (ctx.bonuses || []).filter((bonus) => bonus.type === "freeze" && !bonus.dead && bonus.ttl > 0 && dist(ctx.tank, bonus) <= TILE * 5.8).length,
         ctx.mapVersion || 0,
