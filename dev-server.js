@@ -200,6 +200,7 @@ async function requestGeminiCoach(snapshot) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    const pathname = req.url.split("?")[0];
     if (req.url.startsWith("/version")) {
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
@@ -233,13 +234,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.url.startsWith("/gemini-coach/status")) {
+    if (pathname === "/gemini-coach/status") {
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       res.end(JSON.stringify({ configured: Boolean(process.env.GEMINI_API_KEY), model: GEMINI_MODEL }));
       return;
     }
 
-    if (req.url.startsWith("/gemini-coach")) {
+    if (pathname === "/gemini-coach") {
       if (req.method !== "POST") {
         res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("Method not allowed");
