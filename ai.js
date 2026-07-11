@@ -533,7 +533,7 @@
         syncBusy = false;
         if (!disposed && syncDirty) syncMemoryFile();
       }
-    }, 500);
+    }, 5000);
   }
 
   function syncMemoryFileNow() {
@@ -567,8 +567,6 @@
       body: JSON.stringify({
         training: readTraining(),
       }),
-    }).then(() => {
-      syncDirty = false;
     }).catch(() => {});
   }
 
@@ -666,7 +664,6 @@
       ...fileTrainingCache,
       seconds: (fileTrainingCache.seconds || 0) + Math.max(0, Number(seconds) || 0),
     });
-    syncMemoryFile();
   }
 
   function incrementTrainingGames() {
@@ -1841,6 +1838,7 @@
     const enemyCell = route.cells[0];
     const baseCell = cellOf(ctx.base, ctx.cols, ctx.rows);
     const directRoute = routeDistanceToTarget(ctx, tank, enemy);
+    const allyDistanceMap = buildWeightedDistance(ctx, [tank], false);
     const targetDir = directionTo(tank, enemy);
     const candidates = [];
     const maxIndex = Math.min(route.cells.length - 1, 18);
@@ -1859,15 +1857,18 @@
       .filter((item, i, list) => item.cell && list.findIndex((other) => other.cell.x === item.cell.x && other.cell.y === item.cell.y) === i)
       .map((item) => {
         const box = { x: item.cell.x * TILE + 2, y: item.cell.y * TILE + 2, w: 28, h: 28 };
-        const allyRoute = routeDistanceToPoint(ctx, tank, box, false);
+        const allyRoute = allyDistanceMap[key(item.cell.x, item.cell.y, ctx.cols)];
         if (Number.isFinite(directRoute) && Number.isFinite(allyRoute) && allyRoute > directRoute + 5) return null;
-        const meetGap = Number.isFinite(allyRoute) ? Math.abs(allyRoute - item.index) : 99;
+        const allySeconds = Number.isFinite(allyRoute) ? allyRoute * TILE / Math.max(55, tank.speed || tank.baseSpeed || 90) : Infinity;
+        const enemySeconds = item.index * TILE / Math.max(55, enemy.speed || 90);
+        if (!Number.isFinite(allySeconds) || allySeconds > enemySeconds + 0.7) return null;
+        const meetGap = Math.abs(allySeconds - enemySeconds);
         const lineShot = item.cell.x === enemyCell.x || item.cell.y === enemyCell.y ? -5 : 0;
         const sideBias = ownSide(ctx, box, name) ? -3 : 3;
         const firstDir = directionTo(tank, box);
         const awayPenalty = targetDir && firstDir === OPPOSITE[targetDir] ? 28 : 0;
-        const lateInterceptPenalty = Number.isFinite(allyRoute) && allyRoute > item.index + 3 ? 18 : 0;
-        const score = (Number.isFinite(allyRoute) ? allyRoute : 120) * 2.4 + meetGap * 1.6 + item.index * 0.45 + sideBias + lineShot + awayPenalty + lateInterceptPenalty + bulletRisk(box, ctx.bullets || [], true) * 8;
+        const arrivalMargin = Math.max(0, allySeconds - enemySeconds + 0.25) * 22;
+        const score = allyRoute * 2.2 + meetGap * 5.5 + item.index * 0.35 + sideBias + lineShot + awayPenalty + arrivalMargin + bulletRisk(box, ctx.bullets || [], true) * 8;
         return { box, score };
       })
       .filter((item) => item && Number.isFinite(item.score))
@@ -2731,12 +2732,13 @@
     const urgent = threat > 14 || baseDistance < TILE * 11;
     const firing = shootingPositionGoals(ctx, tank, target, name);
     const chase = directChaseGoals(ctx, target);
+    const routeIntercept = routeInterceptGoals(ctx, tank, target, name);
     const intercept = interceptGoals(ctx, target, name);
     const corridor = approachCorridorGoals(ctx, target, name);
     if (urgent) {
-      return [...corridor, ...firing.slice(0, 12), ...intercept.slice(0, 18), ...chase];
+      return [...routeIntercept, ...corridor, ...firing.slice(0, 12), ...intercept.slice(0, 18), ...chase];
     }
-    return [...chase, ...firing.slice(0, 10), ...corridor.slice(0, 8), ...intercept.slice(0, 8)];
+    return [...routeIntercept.slice(0, 10), ...chase, ...firing.slice(0, 10), ...corridor.slice(0, 8), ...intercept.slice(0, 8)];
   }
 
   function firingProfile(ctx, goalCell, targetCell) {
@@ -3855,7 +3857,7 @@
         targetLock = 0;
       }
       const urgent = action.mode?.includes("dodge") || action.mode?.includes("melee") || action.mode?.includes("fire") || action.mode?.includes("clear");
-      thinkCooldown = action.target ? 0.035 : urgent ? 0.045 : action.hold ? 0.06 : 0.11;
+      thinkCooldown = action.target ? (urgent ? 0.04 : 0.065) : urgent ? 0.045 : action.hold ? 0.06 : 0.11;
       lastAction = action;
       return action;
     }
@@ -3920,6 +3922,7 @@
       }
       const goals = [
         ...tacticalMemoryGoals(ctx, target, name),
+        ...routeInterceptGoals(ctx, tank, target, name),
         ...shootingPositionGoals(ctx, tank, target, name),
         ...(directBaseLane ? baseFireLaneGoals(ctx, target, name) : interceptGoals(ctx, target, name)),
         ...basePanicGoals(ctx, target, name),
