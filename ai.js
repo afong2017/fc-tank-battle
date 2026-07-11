@@ -3250,6 +3250,16 @@
     return null;
   }
 
+  function frozenTargetShotDir(ctx, tank, target) {
+    if ((ctx.freezeTime || 0) <= 0.05 || !target?.alive) return null;
+    const dirs = [tank.dir, ...targetDirOrder(tank, target), "up", "down", "left", "right"]
+      .filter((dir, index, list) => dir && list.indexOf(dir) === index);
+    for (const dir of dirs) {
+      if (certainHit(ctx, tank, dir, target, true, 11)) return dir;
+    }
+    return null;
+  }
+
   function axisLineShotDir(ctx, tank, target) {
     if (!target?.alive) return null;
     const tx = centerX(tank);
@@ -3560,22 +3570,23 @@
     return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   }
 
-  function certainHit(ctx, tank, dir, target) {
+  function certainHit(ctx, tank, dir, target, fullRange = false, tolerance = 8) {
     const d = DIRS[dir];
     if (!d || !target?.alive) return false;
     const tx = centerX(tank);
     const ty = centerY(tank);
     const ex = centerX(target);
     const ey = centerY(target);
-    if ((dir === "up" || dir === "down") && Math.abs(tx - ex) > 8) return false;
-    if ((dir === "left" || dir === "right") && Math.abs(ty - ey) > 8) return false;
+    if ((dir === "up" || dir === "down") && Math.abs(tx - ex) > tolerance) return false;
+    if ((dir === "left" || dir === "right") && Math.abs(ty - ey) > tolerance) return false;
     if (dir === "up" && ey >= ty) return false;
     if (dir === "down" && ey <= ty) return false;
     if (dir === "left" && ex >= tx) return false;
     if (dir === "right" && ex <= tx) return false;
     let x = tx;
     let y = ty;
-    for (let i = 0; i < 42; i++) {
+    const maxSteps = fullRange ? Math.max(ctx.cols || 26, ctx.rows || 24) * 4 + 8 : 42;
+    for (let i = 0; i < maxSteps; i++) {
       x += d.x * TILE * 0.25;
       y += d.y * TILE * 0.25;
       if (x < 0 || y < 0 || x >= ctx.cols * TILE || y >= ctx.rows * TILE) return false;
@@ -4098,7 +4109,7 @@
       const freezeTarget = freezeAssaultTarget(ctx, tank, name);
       if (freezeTarget) {
         const freezeBasePressure = baseThreatScore(ctx, freezeTarget) > 12 || dist(freezeTarget, ctx.base) < TILE * 12;
-        const shot = (freezeBasePressure ? panicShotDir(ctx, tank, freezeTarget) : null) || safeShotDir(ctx, tank, freezeTarget) || shotDir(ctx, tank, freezeTarget);
+        const shot = frozenTargetShotDir(ctx, tank, freezeTarget);
         if (shot && ctx.canFire?.() && scan.bulletRisk < (freezeBasePressure ? 18 : 10.5)) {
           lastMode = "freeze-assault-fire";
           return commit(ctx, { dir: shot, fire: true, hold: true, mode: "freeze-assault-fire", target: freezeTarget }, dt);
