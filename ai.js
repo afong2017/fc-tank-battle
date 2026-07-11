@@ -2080,13 +2080,13 @@
     const visibleCount = (ctx.enemies || []).filter((enemy) => visibleEnemy(ctx, enemy)).length;
     return (ctx.enemies || [])
       .filter((enemy) => visibleEnemy(ctx, enemy) && eligibleSideTarget(ctx, enemy, name))
+      .filter((enemy) => visibleCount <= 1 || !reservedTarget(ctx, enemy) || canShareTarget(ctx, enemy, tank))
       .map((enemy) => {
         const nearBase = Math.max(0, TILE * 14 - dist(enemy, ctx.base)) / 8;
         const nearSelf = Math.max(0, TILE * 12 - dist(enemy, tank)) / 10;
         const route = routeDistanceToPoint(ctx, tank, enemy, true);
         const routeScore = Number.isFinite(route) ? route * 7 : 120;
-        const reservedPenalty = visibleCount > 1 && reservedTarget(ctx, enemy) && !dominantSharedBaseThreat(ctx, enemy) ? 1400 : 0;
-        return { enemy, score: nearBase + nearSelf - routeScore + baseThreatScore(ctx, enemy) * 2.2 - reservedPenalty };
+        return { enemy, score: nearBase + nearSelf - routeScore + baseThreatScore(ctx, enemy) * 2.2 };
       })
       .sort((a, b) => b.score - a.score)[0]?.enemy || null;
   }
@@ -4237,6 +4237,11 @@
       ctx.weights = normalizeWeights(patchedWeights);
       ctx.patches = memory.patches || [];
       const tank = ctx.tank;
+      if (visibleEnemy(ctx, ctx.forcedTarget)
+        && reservedTarget(ctx, ctx.forcedTarget)
+        && !canShareTarget(ctx, ctx.forcedTarget, tank)) {
+        ctx.forcedTarget = null;
+      }
       const scan = scanBattlefield(ctx, tank, name);
       const candidateBaseTarget = scan.forced ? scan.baseTarget : baseApproachTarget(ctx);
       const baseNearestTarget = stableBaseTarget(ctx, candidateBaseTarget, scan.forced);
