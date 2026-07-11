@@ -3748,6 +3748,9 @@
     let lastTelemetryMode = "";
     let lastTelemetryTarget = null;
     let priorityBaseTarget = null;
+    let lastObservedX = null;
+    let lastObservedY = null;
+    let idleActionAge = 0;
 
     function stableBaseTarget(ctx, candidate, forced = false) {
       if (forced && candidate?.alive) {
@@ -3824,6 +3827,22 @@
         action = escape && !isMoveIntoEnemyBullet(ctx.tank, escape, ctx.bullets || [], actionBulletThreshold)
           ? { ...action, dir: escape, hold: false, mode: `${action.mode || "move"}-avoid-bullet` }
           : { ...action, dir: null, hold: true, mode: `${action.mode || "move"}-hold-bullet` };
+      }
+      if (ctx.idleOffense && action.target?.alive && !action.fire && !action.hold) {
+        const activeDir = Object.keys(DIRS)
+          .filter((candidate) => candidate !== action.dir
+            && canMove(ctx, candidate)
+            && !isMoveIntoEnemyBullet(ctx.tank, candidate, ctx.bullets || [], 12))
+          .sort((a, b) => {
+            const aBox = makeBox(ctx.tank, a, 34);
+            const bBox = makeBox(ctx.tank, b, 34);
+            return dist(aBox, action.target) - dist(bBox, action.target)
+              || bulletRisk(aBox, ctx.bullets || [], true) - bulletRisk(bBox, ctx.bullets || [], true);
+          })[0] || null;
+        if (activeDir) {
+          action = { ...action, dir: activeDir, mode: `${action.mode || "hunt"}-active` };
+          idleActionAge = 0;
+        }
       }
       const targetChanged = action.target && action.target !== lastTarget;
       const strategyMode = /^(kill-confirm|base-lane|early-midline|patch-base-lockdown)/.test(action.mode || "");
@@ -3997,6 +4016,16 @@
       ctx.disableBrickClear = false;
       ctx.chaseBrickClearOnly = true;
       ctx.aggressiveOnly = true;
+      const observedMove = lastObservedX === null
+        ? Infinity
+        : Math.abs((ctx.tank?.x || 0) - lastObservedX) + Math.abs((ctx.tank?.y || 0) - lastObservedY);
+      const activelyWorking = lastAction?.fire || lastAction?.mode?.includes("clear") || lastAction?.mode?.includes("dodge");
+      idleActionAge = lastAction?.target && observedMove < 0.35 && !activelyWorking
+        ? idleActionAge + Math.max(0, dt)
+        : 0;
+      lastObservedX = ctx.tank?.x ?? null;
+      lastObservedY = ctx.tank?.y ?? null;
+      ctx.idleOffense = idleActionAge > 0.7;
       const nearbyEnemySignature = (ctx.enemies || [])
         .filter((enemy) => enemy?.alive && visibleEnemy(ctx, enemy) && dist(enemy, ctx.tank) < TILE * 6.2)
         .map((enemy) => `${Math.round(centerX(enemy) / 16)},${Math.round(centerY(enemy) / 16)}`)
@@ -4168,7 +4197,7 @@
         }
         return commit(ctx, { dir, fire: false, hold: false, mode: "freeze-assault", target: freezeTarget }, dt);
       }
-      ctx.chaseStalled = targetNoProgressAge > 0.55 || targetWorkAge > 0.95;
+      ctx.chaseStalled = ctx.idleOffense || targetNoProgressAge > 0.55 || targetWorkAge > 0.95;
       const personalEmergencyTarget = closeAttackerTarget(ctx, tank);
       const missionMeleeTarget = baseNearestTarget?.alive && dist(tank, baseNearestTarget) < TILE * 8.6 ? baseNearestTarget : null;
       const immediateMeleeTarget = personalEmergencyTarget
@@ -4196,19 +4225,31 @@
           lastMode = "base-nearest-hunt-fire";
           return commit(ctx, { dir: shot, fire: true, hold: true, mode: "base-nearest-hunt-fire", target: baseNearestTarget }, dt);
         }
-        ctx.chaseStalled = targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
+        ctx.chaseStalled = ctx.idleOffense || targetNoProgressAge > 0.35 || targetWorkAge > 0.85;
         const targetThreat = baseThreatScore(ctx, baseNearestTarget);
         const coachRole = name === "1P" ? ctx.coachAdvice?.p1Role : ctx.coachAdvice?.p2Role;
         const intercepting = coachRole === "intercept" || targetThreat > 14 || dist(baseNearestTarget, ctx.base) < TILE * 11;
         const pocketGoals = basePocketGoals(ctx, tank, baseNearestTarget);
         const goals = pocketGoals.length ? pocketGoals : balancedCombatGoals(ctx, tank, baseNearestTarget, name);
-        const dir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, intercepting ? "intercept" : "attack") || directionTo(tank, baseNearestTarget);
+        const plannedDir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, intercepting ? "intercept" : "attack") || directionTo(tank, baseNearestTarget);
+        const alternativeDir = Object.keys(DIRS)
+          .filter((candidate) => canMove(ctx, candidate)
+            && !isMoveIntoEnemyBullet(tank, candidate, ctx.bullets || [], 12)
+            && (!ctx.idleOffense || candidate !== plannedDir))
+          .sort((a, b) => {
+            const aBox = makeBox(tank, a, 34);
+            const bBox = makeBox(tank, b, 34);
+            return dist(aBox, baseNearestTarget) - dist(bBox, baseNearestTarget)
+              || bulletRisk(aBox, ctx.bullets || [], true) - bulletRisk(bBox, ctx.bullets || [], true);
+          })[0] || null;
+        const needsActiveReposition = ctx.idleOffense || (ctx.routeNeedsClear && !ctx.canFire?.()) || !canMove(ctx, plannedDir);
+        const dir = needsActiveReposition && alternativeDir ? alternativeDir : plannedDir;
         lastMode = "base-nearest-hunt";
         if (ctx.routeNeedsClear && ctx.canFire?.()) {
           lastMode = "base-nearest-hunt-clear";
           return commit(ctx, { dir, fire: true, hold: true, mode: "base-nearest-hunt-clear", target: baseNearestTarget }, dt);
         }
-        return commit(ctx, { dir, fire: false, hold: false, mode: "base-nearest-hunt", target: baseNearestTarget }, dt);
+        return commit(ctx, { dir, fire: false, hold: false, mode: needsActiveReposition ? "base-nearest-hunt-reposition" : "base-nearest-hunt", target: baseNearestTarget }, dt);
       }
 
       if (executeTarget && !freezeTarget) {
