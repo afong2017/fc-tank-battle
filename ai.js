@@ -4232,6 +4232,15 @@
         const pocketGoals = basePocketGoals(ctx, tank, baseNearestTarget);
         const goals = pocketGoals.length ? pocketGoals : balancedCombatGoals(ctx, tank, baseNearestTarget, name);
         const plannedDir = routeDir(ctx, tank, goals.length ? goals : [baseNearestTarget], baseNearestTarget, intercepting ? "intercept" : "attack") || directionTo(tank, baseNearestTarget);
+        const fieldMidline = (ctx.rows || 24) * TILE * 0.5;
+        const nearBaseEmergency = (ctx.enemies || []).some((enemy) => visibleEnemy(ctx, enemy)
+          && (dist(enemy, ctx.base) < TILE * 8 || threatLine(enemy, ctx.base, TILE * 1.7) && centerY(enemy) > fieldMidline));
+        const shouldAdvance2P = name === "2P"
+          && centerY(tank) > fieldMidline + TILE * 2
+          && centerY(baseNearestTarget) < centerY(tank) - TILE * 3
+          && !nearBaseEmergency
+          && canMove(ctx, "up")
+          && !isMoveIntoEnemyBullet(tank, "up", ctx.bullets || [], 12);
         const alternativeDir = Object.keys(DIRS)
           .filter((candidate) => canMove(ctx, candidate)
             && !isMoveIntoEnemyBullet(tank, candidate, ctx.bullets || [], 12)
@@ -4243,7 +4252,7 @@
               || bulletRisk(aBox, ctx.bullets || [], true) - bulletRisk(bBox, ctx.bullets || [], true);
           })[0] || null;
         const needsActiveReposition = ctx.idleOffense || (ctx.routeNeedsClear && !ctx.canFire?.()) || !canMove(ctx, plannedDir);
-        const dir = needsActiveReposition && alternativeDir ? alternativeDir : plannedDir;
+        const dir = shouldAdvance2P ? "up" : needsActiveReposition && alternativeDir ? alternativeDir : plannedDir;
         lastMode = "base-nearest-hunt";
         if (ctx.routeNeedsClear && ctx.canFire?.()) {
           lastMode = "base-nearest-hunt-clear";
