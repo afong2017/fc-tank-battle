@@ -1677,6 +1677,19 @@
     return seconds;
   }
 
+  function baseDangerPriority(ctx, enemy) {
+    if (!visibleEnemy(ctx, enemy)) return -Infinity;
+    const arrival = estimatedBaseArrival(ctx, enemy);
+    const baseDistance = dist(enemy, ctx.base);
+    const directLane = threatLine(enemy, ctx.base, TILE * 2.2);
+    const lowerProgress = centerY(enemy) / Math.max(TILE, (ctx.rows || 24) * TILE);
+    return baseThreatScore(ctx, enemy)
+      + 150 / Math.max(0.55, arrival)
+      + Math.max(0, TILE * 16 - baseDistance) / 10
+      + lowerProgress * 22
+      + (directLane ? 64 : 0);
+  }
+
   function baseApproachTarget(ctx) {
     const ranked = (ctx.enemies || [])
       .filter((enemy) => visibleEnemy(ctx, enemy))
@@ -1684,8 +1697,9 @@
         enemy,
         baseDistance: dist(enemy, ctx.base),
         arrival: estimatedBaseArrival(ctx, enemy),
+        priority: baseDangerPriority(ctx, enemy),
       }))
-      .sort((a, b) => a.arrival - b.arrival || a.baseDistance - b.baseDistance);
+      .sort((a, b) => b.priority - a.priority || a.arrival - b.arrival || a.baseDistance - b.baseDistance);
     if (!ranked.length) return null;
     return ranked.find((item) => !reservedTarget(ctx, item.enemy) || canShareTarget(ctx, item.enemy))?.enemy || ranked[0].enemy;
   }
@@ -3701,6 +3715,38 @@
     let basePocketGate = null;
     let lastTelemetryMode = "";
     let lastTelemetryTarget = null;
+    let priorityBaseTarget = null;
+
+    function stableBaseTarget(ctx, candidate, forced = false) {
+      if (forced && candidate?.alive) {
+        priorityBaseTarget = candidate;
+        return candidate;
+      }
+      if (!priorityBaseTarget?.alive || !visibleEnemy(ctx, priorityBaseTarget)) {
+        priorityBaseTarget = candidate?.alive ? candidate : null;
+        return priorityBaseTarget;
+      }
+      if (!candidate?.alive || candidate === priorityBaseTarget) return priorityBaseTarget;
+
+      const current = priorityBaseTarget;
+      const currentArrival = estimatedBaseArrival(ctx, current);
+      const candidateArrival = estimatedBaseArrival(ctx, candidate);
+      const currentPriority = baseDangerPriority(ctx, current);
+      const candidatePriority = baseDangerPriority(ctx, candidate);
+      const currentDistance = dist(current, ctx.base);
+      const candidateDistance = dist(candidate, ctx.base);
+      const candidateDirect = threatLine(candidate, ctx.base, TILE * 2.2);
+      const currentDirect = threatLine(current, ctx.base, TILE * 2.2);
+      const immediateBaseEmergency = candidateDistance < TILE * 5.5
+        && candidateDistance + TILE * 2.2 < currentDistance;
+      const fasterCriticalArrival = candidateArrival + 1.15 < currentArrival
+        && candidatePriority > currentPriority + 14;
+      const newDirectFireLane = candidateDirect && !currentDirect
+        && candidateArrival + 0.55 < currentArrival
+        && candidatePriority > currentPriority + 10;
+      if (immediateBaseEmergency || fasterCriticalArrival || newDirectFireLane) priorityBaseTarget = candidate;
+      return priorityBaseTarget;
+    }
 
     function learn(event, amount = 1) {
       const weights = memory.weights;
@@ -3976,10 +4022,26 @@
       ctx.patches = memory.patches || [];
       const tank = ctx.tank;
       const scan = scanBattlefield(ctx, tank, name);
-      const lockedTarget = lastTarget?.alive && targetLock > 0 && eligibleSideTarget(ctx, lastTarget, name) && !scan.emergency && !scan.baseTarget && !scan.forced ? lastTarget : null;
+      const candidateBaseTarget = scan.forced ? scan.baseTarget : baseApproachTarget(ctx);
+      const baseNearestTarget = stableBaseTarget(ctx, candidateBaseTarget, scan.forced);
+      if (baseNearestTarget?.alive) {
+        scan.enemyTarget = baseNearestTarget;
+        scan.enemyShot = shotDir(ctx, tank, baseNearestTarget);
+        if (criticalBaseThreat(ctx, baseNearestTarget)) {
+          scan.baseTarget = baseNearestTarget;
+          scan.baseShot = baseDangerClose(ctx, baseNearestTarget)
+            ? safeShotDir(ctx, tank, baseNearestTarget)
+            : shotDir(ctx, tank, baseNearestTarget);
+        }
+      }
+      const lockedTarget = lastTarget?.alive && targetLock > 0 && eligibleSideTarget(ctx, lastTarget, name) && !scan.forced ? lastTarget : null;
       if (lockedTarget && scan.enemyTarget !== lockedTarget) {
-        scan.enemyTarget = lockedTarget;
-        scan.enemyShot = shotDir(ctx, tank, lockedTarget);
+        const lockedPriority = baseDangerPriority(ctx, lockedTarget);
+        const missionPriority = baseDangerPriority(ctx, baseNearestTarget);
+        if (lockedTarget === baseNearestTarget || lockedPriority >= missionPriority - 8) {
+          scan.enemyTarget = lockedTarget;
+          scan.enemyShot = shotDir(ctx, tank, lockedTarget);
+        }
       }
       const guard = guardGoals(ctx, name);
       const guardRange = dist(tank, ctx.base);
@@ -3987,7 +4049,6 @@
       const closeFreeze = immediateFreeze || nearFreezeBonus(ctx, tank);
       const urgentFreeze = urgentFreezeBonus(ctx, tank);
       const bonus = !scan.emergency && !visibleBasePressure ? nearbyBonus(ctx, tank) : null;
-      const baseNearestTarget = baseApproachTarget(ctx);
       const guardCells = baseGuardCells(ctx);
       const tankCell = cellOf(tank, ctx.cols, ctx.rows);
       const pocketTargetCell = baseNearestTarget ? cellOf(baseNearestTarget, ctx.cols, ctx.rows) : null;
@@ -4010,11 +4071,16 @@
       }
       const intruder = baseIntruder(ctx, name);
       const anchorThreat = baseAnchorThreat(ctx);
-      const laneThreat = baseFireLaneThreat(ctx);
+      const scannedLaneThreat = baseFireLaneThreat(ctx);
+      const laneThreat = baseNearestTarget?.alive && (
+        scannedLaneThreat === baseNearestTarget
+        || threatLine(baseNearestTarget, ctx.base, TILE * 2.2)
+      ) ? baseNearestTarget : null;
       const spawnEnemy = spawnThreat(ctx, tank, name);
       const killThreat = ctx.adaptive.killConfirm ? (intruder || laneThreat || killConfirmThreat(ctx, tank, name)) : null;
       const endgameThreat = !scan.baseTarget && !intruder ? endgameStalledThreat(ctx, tank, name) : null;
-      const midlineThreat = !intruder && !anchorThreat && !laneThreat ? midlineBreachThreat(ctx) : null;
+      const scannedMidlineThreat = !intruder && !anchorThreat && !laneThreat ? midlineBreachThreat(ctx) : null;
+      const midlineThreat = scannedMidlineThreat === baseNearestTarget ? baseNearestTarget : null;
       const advancingThreat = !intruder && !anchorThreat && !laneThreat ? advancingPressureThreat(ctx, tank, name) : null;
       const executeTarget = committedThreatTarget(ctx, scan);
       const chaseTarget = chaseStallTarget(ctx, scan);
@@ -4063,7 +4129,11 @@
         return commit(ctx, { dir, fire: false, hold: false, mode: "freeze-assault", target: freezeTarget }, dt);
       }
       ctx.chaseStalled = targetNoProgressAge > 0.55 || targetWorkAge > 0.95;
-      const immediateMeleeTarget = scan.closeCombatTarget || (anchorThreat && dist(tank, anchorThreat) < TILE * 8.6 ? anchorThreat : null);
+      const personalEmergencyTarget = closeAttackerTarget(ctx, tank);
+      const missionMeleeTarget = baseNearestTarget?.alive && dist(tank, baseNearestTarget) < TILE * 8.6 ? baseNearestTarget : null;
+      const immediateMeleeTarget = personalEmergencyTarget
+        || missionMeleeTarget
+        || (!criticalBaseThreat(ctx, baseNearestTarget) ? scan.closeCombatTarget : null);
       const immediateMeleeAction = closeCombatAction(ctx, tank, immediateMeleeTarget, name);
       if (immediateMeleeAction) {
         lastMode = immediateMeleeAction.mode;
