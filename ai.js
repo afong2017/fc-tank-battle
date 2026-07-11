@@ -70,6 +70,21 @@
     autoTuning: null,
     lastFailures: [],
     evolution: null,
+    diagnostics: null,
+  };
+  const DIAGNOSTIC_TUNING_DEFAULTS = {
+    interceptMargin: 0.7,
+    idleTimeout: 0.7,
+    meleeCommit: 0,
+    dodgeSafety: 0,
+    baseSwitchUrgency: 0,
+  };
+  const DIAGNOSTIC_TUNING_RANGES = {
+    interceptMargin: [0.35, 1.2],
+    idleTimeout: [0.4, 0.9],
+    meleeCommit: [0, 0.4],
+    dodgeSafety: [0, 0.4],
+    baseSwitchUrgency: [0, 0.45],
   };
   const DEFAULT_STRATEGY_GENES = {
     killConfirm: { value: 0.55, score: 0, trials: 0 },
@@ -166,6 +181,38 @@
       autoTuning: normalizeAutoTuning(saved.autoTuning),
       lastFailures: Array.isArray(saved.lastFailures) ? saved.lastFailures.slice(0, 4) : [],
       evolution: normalizeEvolution(saved.evolution),
+      diagnostics: normalizeDiagnostics(saved.diagnostics),
+    };
+  }
+
+  function normalizeDiagnostics(saved = {}) {
+    const tuning = { ...DIAGNOSTIC_TUNING_DEFAULTS };
+    for (const [key, defaults] of Object.entries(DIAGNOSTIC_TUNING_DEFAULTS)) {
+      const range = DIAGNOSTIC_TUNING_RANGES[key];
+      tuning[key] = clamp(Number.isFinite(Number(saved?.tuning?.[key])) ? Number(saved.tuning[key]) : defaults, range[0], range[1]);
+    }
+    const active = saved?.active && typeof saved.active === "object" ? {
+      issue: String(saved.active.issue || ""),
+      parameter: String(saved.active.parameter || ""),
+      candidate: Number(saved.active.candidate),
+      baselineUtility: Number(saved.active.baselineUtility) || 0,
+      games: Math.max(0, Math.floor(Number(saved.active.games) || 0)),
+      utilityTotal: Number(saved.active.utilityTotal) || 0,
+      startedAt: Number(saved.active.startedAt) || 0,
+    } : null;
+    return {
+      version: 1,
+      issues: saved?.issues && typeof saved.issues === "object" ? { ...saved.issues } : {},
+      tuning,
+      baseline: {
+        samples: Math.max(0, Math.floor(Number(saved?.baseline?.samples) || 0)),
+        utility: Number(saved?.baseline?.utility) || 0,
+      },
+      active: active?.issue && active.parameter && Number.isFinite(active.candidate) ? active : null,
+      cooldown: Math.max(0, Math.floor(Number(saved?.cooldown) || 0)),
+      history: Array.isArray(saved?.history) ? saved.history.slice(-16) : [],
+      lastDiagnosis: typeof saved?.lastDiagnosis === "string" ? saved.lastDiagnosis.slice(0, 120) : "",
+      updatedAt: Number(saved?.updatedAt) || 0,
     };
   }
 
@@ -920,6 +967,88 @@
     });
   }
 
+  function matchDiagnosticUtility(counters = {}, result = {}, score = 0) {
+    return score
+      + (result.win ? 350 : 0)
+      + (Number(counters.enemy_killed) || 0) * 18
+      - (Number(counters.base_hit) || 0) * 260
+      - (Number(counters.ally_death) || 0) * 45
+      - (Number(counters.ally_stuck) || 0) * 55;
+  }
+
+  function updateAutonomousDiagnostics(memory, counters = {}, result = {}, score = 0) {
+    const diagnostics = normalizeDiagnostics(memory.diagnostics);
+    const issueSamples = {
+      baseDefense: (Number(counters.base_hit) || 0) * 4 + (Number(counters.enemy_cross_midline) || 0) * 0.12,
+      interception: (Number(counters.base_hit) || 0) * 2 + (Number(counters.enemy_cross_midline) || 0) * 0.22,
+      melee: (Number(counters.close_combat_loss) || 0) + (Number(counters.duel_lost) || 0) * 1.2,
+      idle: (Number(counters.ally_stuck) || 0) * 1.5 + (Number(counters.target_stale) || 0),
+      dodge: (Number(counters.exposed_lane) || 0) + (Number(counters.dodge_failed) || 0) * 1.4,
+    };
+    for (const [issue, sample] of Object.entries(issueSamples)) {
+      diagnostics.issues[issue] = (Number(diagnostics.issues[issue]) || 0) * 0.82 + sample * 0.18;
+    }
+    const utility = matchDiagnosticUtility(counters, result, score);
+    if (diagnostics.active) {
+      diagnostics.active.games += 1;
+      diagnostics.active.utilityTotal += utility;
+      if (diagnostics.active.games >= 8) {
+        const average = diagnostics.active.utilityTotal / diagnostics.active.games;
+        const improvement = average - diagnostics.active.baselineUtility;
+        const accepted = improvement >= 55;
+        if (accepted) diagnostics.tuning[diagnostics.active.parameter] = diagnostics.active.candidate;
+        diagnostics.history.push({
+          issue: diagnostics.active.issue,
+          parameter: diagnostics.active.parameter,
+          candidate: diagnostics.active.candidate,
+          games: diagnostics.active.games,
+          improvement: Math.round(improvement),
+          accepted,
+          endedAt: Date.now(),
+        });
+        diagnostics.lastDiagnosis = `${diagnostics.active.issue}:${accepted ? "PROMOTED" : "ROLLED_BACK"}:${Math.round(improvement)}`;
+        diagnostics.active = null;
+        diagnostics.cooldown = 3;
+      }
+    } else {
+      const samples = diagnostics.baseline.samples;
+      diagnostics.baseline.utility = samples === 0 ? utility : diagnostics.baseline.utility * 0.82 + utility * 0.18;
+      diagnostics.baseline.samples = Math.min(60, samples + 1);
+      diagnostics.cooldown = Math.max(0, diagnostics.cooldown - 1);
+      if (diagnostics.baseline.samples >= 6 && diagnostics.cooldown === 0) {
+        const experiments = {
+          baseDefense: { parameter: "baseSwitchUrgency", delta: 0.08 },
+          interception: { parameter: "interceptMargin", delta: -0.08 },
+          melee: { parameter: "meleeCommit", delta: 0.08 },
+          idle: { parameter: "idleTimeout", delta: -0.06 },
+          dodge: { parameter: "dodgeSafety", delta: 0.08 },
+        };
+        const top = Object.entries(diagnostics.issues).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+        const experiment = top ? experiments[top[0]] : null;
+        if (top && Number(top[1]) >= 0.75 && experiment) {
+          const range = DIAGNOSTIC_TUNING_RANGES[experiment.parameter];
+          const current = diagnostics.tuning[experiment.parameter];
+          const candidate = clamp(current + experiment.delta, range[0], range[1]);
+          if (Math.abs(candidate - current) > 0.001) {
+            diagnostics.active = {
+              issue: top[0],
+              parameter: experiment.parameter,
+              candidate,
+              baselineUtility: diagnostics.baseline.utility,
+              games: 0,
+              utilityTotal: 0,
+              startedAt: Date.now(),
+            };
+            diagnostics.lastDiagnosis = `${top[0]}:TESTING:${experiment.parameter}`;
+          }
+        }
+      }
+    }
+    diagnostics.updatedAt = Date.now();
+    diagnostics.history = diagnostics.history.slice(-16);
+    memory.diagnostics = normalizeDiagnostics(diagnostics);
+  }
+
   function evolveStrategies(memory, counters = {}, result = {}, score = 0) {
     memory.evolution = normalizeEvolution(memory.evolution);
     const genes = memory.evolution.genes;
@@ -1049,6 +1178,7 @@
     }
     memory.weights = normalizeWeights(nextWeights);
     evolveStrategies(memory, counters, result, score);
+    updateAutonomousDiagnostics(memory, counters, result, score);
 
     if (score >= memory.bestScore) {
       memory.bestScore = score;
@@ -1103,6 +1233,9 @@
     const failures = memory.failures || {};
     const evolution = normalizeEvolution(memory.evolution);
     const autoTuning = normalizeAutoTuning(memory.autoTuning);
+    const diagnostics = normalizeDiagnostics(memory.diagnostics);
+    const diagnosticTuning = { ...diagnostics.tuning };
+    if (diagnostics.active) diagnosticTuning[diagnostics.active.parameter] = diagnostics.active.candidate;
     const gene = (name) => evolution.genes?.[name]?.value ?? DEFAULT_STRATEGY_GENES[name]?.value ?? 0.5;
     const perGame = (key) => (Number(failures[key]) || 0) / games;
     const profile = {
@@ -1114,6 +1247,7 @@
       autoTuning,
       genes: evolution.genes,
       activeGene: evolution.active,
+      diagnostics,
     };
     profile.killConfirm = gene("killConfirm") > 0.5 || (profile.basePressure > 0.28 && (profile.stuckPressure > 0.35 || profile.stalePressure > 0.35 || profile.midlinePressure > 0.65));
     profile.laneBlockBias = gene("laneBlock");
@@ -1124,6 +1258,11 @@
     profile.midlineTriggerOffset = autoTuning.midlineTriggerOffset;
     profile.frontGuardBias = autoTuning.frontGuardBias;
     profile.meleePenalty = autoTuning.meleePenalty;
+    profile.interceptMargin = diagnosticTuning.interceptMargin;
+    profile.idleTimeout = diagnosticTuning.idleTimeout;
+    profile.meleeCommit = diagnosticTuning.meleeCommit;
+    profile.dodgeSafety = diagnosticTuning.dodgeSafety;
+    profile.baseSwitchUrgency = diagnosticTuning.baseSwitchUrgency;
     return profile;
   }
 
@@ -1880,7 +2019,7 @@
         if (Number.isFinite(directRoute) && Number.isFinite(allyRoute) && allyRoute > directRoute + 5) return null;
         const allySeconds = Number.isFinite(allyRoute) ? allyRoute * TILE / Math.max(55, tank.speed || tank.baseSpeed || 90) : Infinity;
         const enemySeconds = item.index * TILE / Math.max(55, enemy.speed || 90);
-        if (!Number.isFinite(allySeconds) || allySeconds > enemySeconds + 0.7) return null;
+        if (!Number.isFinite(allySeconds) || allySeconds > enemySeconds + (ctx.adaptive?.interceptMargin ?? 0.7)) return null;
         const meetGap = Math.abs(allySeconds - enemySeconds);
         const lineShot = item.cell.x === enemyCell.x || item.cell.y === enemyCell.y ? -5 : 0;
         const sideBias = ownSide(ctx, box, name) ? -3 : 3;
@@ -3212,8 +3351,9 @@
       if (dir === ctx.lastMoveDir) score += 2.2;
       if (dir === OPPOSITE[ctx.lastMoveDir]) score -= 4.2;
       const perpendicular = verticalBullet ? dir === "left" || dir === "right" : dir === "up" || dir === "down";
-      if (perpendicular) score += incomingEta < 2.2 ? 48 : 22;
-      else if (incomingEta < 2.5) score -= 72;
+      const learnedDodgeSafety = ctx.adaptive?.dodgeSafety || 0;
+      if (perpendicular) score += (incomingEta < 2.2 ? 48 : 22) + learnedDodgeSafety * 35;
+      else if (incomingEta < 2.5) score -= 72 + learnedDodgeSafety * 45;
       if (bullet.dir === "up" || bullet.dir === "down") {
         score += Math.abs(centerX(predicted) - centerX(bullet)) / 7;
         if (Math.abs(centerX(predicted) - centerX(bullet)) < 26) score -= 90;
@@ -3520,7 +3660,7 @@
       return { dir: mustDuel, fire: true, hold: true, mode: "close-melee-duel", target };
     }
     const certain = safeShotDir(ctx, tank, target);
-    if (certain && ctx.canFire?.() && (baseCritical || risk < 13)) {
+    if (certain && ctx.canFire?.() && (baseCritical || risk < 13 + (ctx.adaptive?.meleeCommit || 0) * 4)) {
       return { dir: certain, fire: true, hold: true, mode: "close-melee-fire", target };
     }
     if (surviveFirst && bullet && risk > 2.4) {
@@ -3730,7 +3870,8 @@
   }
 
   function createController(name) {
-    const memory = loadMemory();
+    let memory = loadMemory();
+    let memoryRefreshClock = 0;
     let lastMode = "defend";
     let lastMoveDir = null;
     let lastTarget = null;
@@ -3781,8 +3922,9 @@
       const currentDirect = threatLine(current, ctx.base, TILE * 2.2);
       const immediateBaseEmergency = candidateDistance < TILE * 5.5
         && candidateDistance + TILE * 2.2 < currentDistance;
-      const fasterCriticalArrival = candidateArrival + 1.15 < currentArrival
-        && candidatePriority > currentPriority + 14;
+      const switchUrgency = ctx.adaptive?.baseSwitchUrgency || 0;
+      const fasterCriticalArrival = candidateArrival + Math.max(0.75, 1.15 - switchUrgency * 0.8) < currentArrival
+        && candidatePriority > currentPriority + Math.max(8, 14 - switchUrgency * 12);
       const newDirectFireLane = candidateDirect && !currentDirect
         && candidateArrival + 0.55 < currentArrival
         && candidatePriority > currentPriority + 10;
@@ -4006,6 +4148,11 @@
     }
 
     function decide(ctx, dt = 0) {
+      memoryRefreshClock -= Math.max(0, dt);
+      if (memoryRefreshClock <= 0) {
+        memory = loadMemory();
+        memoryRefreshClock = 1.5;
+      }
       ctx.cols = ctx.cols || 26;
       ctx.rows = ctx.rows || 24;
       ctx.controllerName = name;
@@ -4025,7 +4172,7 @@
         : 0;
       lastObservedX = ctx.tank?.x ?? null;
       lastObservedY = ctx.tank?.y ?? null;
-      ctx.idleOffense = idleActionAge > 0.7;
+      ctx.idleOffense = idleActionAge > (ctx.adaptive?.idleTimeout ?? 0.7);
       const nearbyEnemySignature = (ctx.enemies || [])
         .filter((enemy) => enemy?.alive && visibleEnemy(ctx, enemy) && dist(enemy, ctx.tank) < TILE * 6.2)
         .map((enemy) => `${Math.round(centerX(enemy) / 16)},${Math.round(centerY(enemy) / 16)}`)
@@ -4789,7 +4936,7 @@
       return { name, mode: lastMode, level, weights };
     }
 
-    return { name, decide, learn, memory, snapshot, get mode() { return lastMode; } };
+    return { name, decide, learn, snapshot, get memory() { return memory; }, get mode() { return lastMode; } };
   }
 
   window.TankPartnerAI = {
