@@ -1534,7 +1534,7 @@
     }
     if (ranked.length > 1) {
       for (const item of ranked) {
-        if (reservedTarget(ctx, item.enemy) && item.rawScore < 34 && !criticalBaseThreat(ctx, item.enemy)) item.score -= 1000;
+        if (reservedTarget(ctx, item.enemy) && !dominantSharedBaseThreat(ctx, item.enemy)) item.score -= 1000;
       }
     }
     ranked.sort((a, b) => b.score - a.score);
@@ -1644,7 +1644,8 @@
 
   function canShareTarget(ctx, enemy, tank = ctx.tank) {
     if (!visibleEnemy(ctx, enemy)) return false;
-    return criticalBaseThreat(ctx, enemy) || dist(enemy, ctx.base) < TILE * 7.2 || dist(enemy, tank) < TILE * 2.8;
+    const personalEmergency = dist(enemy, tank) < TILE * 2.8 && threatLine(enemy, tank, 52);
+    return dominantSharedBaseThreat(ctx, enemy) || personalEmergency;
   }
 
   function estimatedBaseArrival(ctx, enemy) {
@@ -1687,6 +1688,24 @@
       + (directLane ? 64 : 0);
   }
 
+  function dominantSharedBaseThreat(ctx, enemy) {
+    if (!visibleEnemy(ctx, enemy)) return false;
+    const visible = (ctx.enemies || []).filter((item) => visibleEnemy(ctx, item));
+    if (visible.length <= 1) return true;
+    const ranked = visible
+      .map((item) => ({ enemy: item, priority: baseDangerPriority(ctx, item) }))
+      .sort((a, b) => b.priority - a.priority);
+    if (ranked[0]?.enemy !== enemy) return false;
+    const lead = ranked[0].priority - (ranked[1]?.priority ?? -Infinity);
+    const immediate = dist(enemy, ctx.base) < TILE * 5.5;
+    const directEmergency = threatLine(enemy, ctx.base, TILE * 1.7)
+      && centerY(enemy) >= (ctx.rows || 24) * TILE * 0.5
+      && dist(enemy, ctx.base) < TILE * 10
+      && estimatedBaseArrival(ctx, enemy) < 2.6
+      && lead > 18;
+    return immediate || directEmergency;
+  }
+
   function baseApproachTarget(ctx) {
     const ranked = (ctx.enemies || [])
       .filter((enemy) => visibleEnemy(ctx, enemy))
@@ -1698,7 +1717,7 @@
       }))
       .sort((a, b) => b.priority - a.priority || a.arrival - b.arrival || a.baseDistance - b.baseDistance);
     if (!ranked.length) return null;
-    return ranked.find((item) => !reservedTarget(ctx, item.enemy) || canShareTarget(ctx, item.enemy))?.enemy || ranked[0].enemy;
+    return ranked.find((item) => !reservedTarget(ctx, item.enemy) || dominantSharedBaseThreat(ctx, item.enemy))?.enemy || ranked[0].enemy;
   }
 
   function nearestBaseEnemy(ctx) {
@@ -1927,7 +1946,7 @@
         const nearSelf = Math.max(0, TILE * 12 - dist(enemy, tank)) / 10;
         const route = routeDistanceToPoint(ctx, tank, enemy, true);
         const routeScore = Number.isFinite(route) ? route * 7 : 120;
-        const reservedPenalty = visibleCount > 1 && reservedTarget(ctx, enemy) && !criticalBaseThreat(ctx, enemy) ? 1400 : 0;
+        const reservedPenalty = visibleCount > 1 && reservedTarget(ctx, enemy) && !dominantSharedBaseThreat(ctx, enemy) ? 1400 : 0;
         return { enemy, score: nearBase + nearSelf - routeScore + baseThreatScore(ctx, enemy) * 2.2 - reservedPenalty };
       })
       .sort((a, b) => b.score - a.score)[0]?.enemy || null;
@@ -3737,6 +3756,13 @@
       }
       if (!priorityBaseTarget?.alive || !visibleEnemy(ctx, priorityBaseTarget)) {
         priorityBaseTarget = candidate?.alive ? candidate : null;
+        return priorityBaseTarget;
+      }
+      if (candidate?.alive
+        && candidate !== priorityBaseTarget
+        && reservedTarget(ctx, priorityBaseTarget)
+        && !dominantSharedBaseThreat(ctx, priorityBaseTarget)) {
+        priorityBaseTarget = candidate;
         return priorityBaseTarget;
       }
       if (!candidate?.alive || candidate === priorityBaseTarget) return priorityBaseTarget;
