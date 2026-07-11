@@ -34,6 +34,7 @@
   let distanceWorker = null;
   let distanceWorkerSeq = 0;
   let disposed = false;
+  let strategyActionCounters = {};
   const workerPendingKeys = new Set();
   const TILE = 32;
   const DIRS = {
@@ -678,6 +679,7 @@
 
   function startMatchExperience(meta = {}) {
     const data = loadExperience();
+    strategyActionCounters = {};
     data.games += 1;
     data.currentMatch = {
       id: `${Date.now()}-${data.games}`,
@@ -734,6 +736,11 @@
   function finishMatchExperience(result = {}) {
     const data = loadExperience();
     if (data.currentMatch) {
+      data.currentMatch.counters ||= {};
+      for (const [key, value] of Object.entries(strategyActionCounters)) {
+        data.currentMatch.counters[key] = (data.currentMatch.counters[key] || 0) + value;
+        data.counters[key] = (data.counters[key] || 0) + value;
+      }
       data.currentMatch.result = result.win ? "win" : "lose";
       data.currentMatch.duration = Math.round((result.duration || 0) * 10) / 10;
       data.currentMatch.endedAt = Date.now();
@@ -741,6 +748,7 @@
     writeMatchSummary(data.currentMatch);
     const matchEvents = data.currentMatch?.id ? data.events.filter((event) => event.matchId === data.currentMatch.id) : [];
     learnFromMatch(data.currentMatch, result, matchEvents, data.events);
+    strategyActionCounters = {};
     saveExperience(data);
   }
 
@@ -921,8 +929,10 @@
     const modeCount = (mode) => Number(counters[`mode:${mode}`]) || 0;
     const killMode = modeCount("kill-confirm") + modeCount("kill-confirm-fire") + modeCount("kill-confirm-clear");
     const killFire = modeCount("kill-confirm-fire") + modeCount("kill-confirm-clear");
-    const laneMode = modeCount("base-lane-block") + modeCount("base-lane-fire") + modeCount("base-lane-clear");
-    const laneFire = modeCount("base-lane-fire") + modeCount("base-lane-clear");
+    const laneMode = modeCount("base-lane-block") + modeCount("base-lane-intercept") + modeCount("base-lane-fire") + modeCount("base-lane-clear")
+      + modeCount("early-midline-intercept") + modeCount("early-midline-fire") + modeCount("early-midline-clear");
+    const laneFire = modeCount("base-lane-fire") + modeCount("base-lane-clear")
+      + modeCount("early-midline-fire") + modeCount("early-midline-clear");
     const lockdownMode = modeCount("patch-base-lockdown") + modeCount("patch-base-lockdown-fire") + modeCount("patch-base-lockdown-clear");
     const lockdownFire = modeCount("patch-base-lockdown-fire") + modeCount("patch-base-lockdown-clear");
     const kills = Number(counters.enemy_killed) || 0;
@@ -3152,6 +3162,8 @@
     let bestScore = -Infinity;
     const reports = ctx.allyFireReports || [];
     const currentRisk = bulletRisk(tank, ctx.bullets || [], true) + allyRadioRisk(tank, reports);
+    const incomingEta = bulletDistanceToTank(tank, bullet) / Math.max(1, bullet.speed || 230);
+    const verticalBullet = bullet.dir === "up" || bullet.dir === "down";
     for (const dir of options) {
       if (!canMove(ctx, dir)) continue;
       const predicted = makeBox(tank, dir, 34);
@@ -3164,10 +3176,15 @@
       if (dir === tank.dir) score += 1.5;
       if (dir === ctx.lastMoveDir) score += 2.2;
       if (dir === OPPOSITE[ctx.lastMoveDir]) score -= 4.2;
+      const perpendicular = verticalBullet ? dir === "left" || dir === "right" : dir === "up" || dir === "down";
+      if (perpendicular) score += incomingEta < 2.2 ? 48 : 22;
+      else if (incomingEta < 2.5) score -= 72;
       if (bullet.dir === "up" || bullet.dir === "down") {
         score += Math.abs(centerX(predicted) - centerX(bullet)) / 7;
+        if (Math.abs(centerX(predicted) - centerX(bullet)) < 26) score -= 90;
       } else {
         score += Math.abs(centerY(predicted) - centerY(bullet)) / 7;
+        if (Math.abs(centerY(predicted) - centerY(bullet)) < 26) score -= 90;
       }
       if (dist(predicted, ctx.base) > dist(tank, ctx.base) + TILE * 2 && (ctx.enemies.length > 2 || defendCritical)) score -= defendCritical ? 7.5 : 2.5;
       if (defendCritical && centerY(predicted) > centerY(ctx.base) - TILE * 6) score += 2.5 + (ctx.adaptive?.dodgeDiscipline || 0) * 2.2;
@@ -3179,6 +3196,20 @@
       }
     }
     return best;
+  }
+
+  function canClearIncomingLane(tank, dir, bullet) {
+    if (!tank || !bullet || !DIRS[dir]) return false;
+    const vertical = bullet.dir === "up" || bullet.dir === "down";
+    const perpendicular = vertical ? dir === "left" || dir === "right" : dir === "up" || dir === "down";
+    if (!perpendicular) return false;
+    const crossOffset = vertical
+      ? Math.abs(centerX(tank) - centerX(bullet))
+      : Math.abs(centerY(tank) - centerY(bullet));
+    const needed = Math.max(0, (vertical ? (tank.w || 28) : (tank.h || 28)) * 0.5 + 9 - crossOffset);
+    const escapeSeconds = needed / Math.max(1, tank.speed || tank.baseSpeed || 90) + 0.1;
+    const impactSeconds = bulletDistanceToTank(tank, bullet) / Math.max(1, bullet.speed || 230);
+    return impactSeconds > escapeSeconds;
   }
 
   function shotDir(ctx, tank, target) {
@@ -3443,13 +3474,13 @@
     if (mustDuel) {
       return { dir: mustDuel, fire: true, hold: true, mode: "close-melee-duel", target };
     }
+    const certain = safeShotDir(ctx, tank, target);
+    if (certain && ctx.canFire?.() && (baseCritical || risk < 13)) {
+      return { dir: certain, fire: true, hold: true, mode: "close-melee-fire", target };
+    }
     if (surviveFirst && bullet && risk > 2.4) {
       const dir = dodgeDir(ctx, tank, bullet);
       if (dir) return { dir, fire: false, hold: false, mode: "close-melee-dodge", target };
-    }
-    const certain = safeShotDir(ctx, tank, target);
-    if (certain && risk < 13) {
-      return { dir: certain, fire: true, hold: true, mode: "close-melee-fire", target };
     }
 
     const duel = duelShotDir(ctx, tank, target, bullet);
@@ -3466,14 +3497,17 @@
     if (align) return align;
 
     const shot = shotDir(ctx, tank, target);
-    if (shot && !sideLaneShotTooEarly(ctx, tank, target, shot) && risk < 6.6) {
+    if (shot && ctx.canFire?.() && !sideLaneShotTooEarly(ctx, tank, target, shot) && risk < 6.6) {
       return { dir: shot, fire: true, hold: true, mode: "close-melee-fire", target };
     }
 
     const face = directionTo(tank, target);
     const pocketGoals = basePocketGoals(ctx, tank, target);
+    const stalled = Boolean(ctx.chaseStalled);
     const rawGoals = pocketGoals.length
       ? pocketGoals
+      : stalled || baseCritical
+        ? [...shootingPositionGoals(ctx, tank, target, name), ...basePanicGoals(ctx, target, name), ...meleeInterceptGoals(ctx, target)]
       : distance < TILE * 3.2
         ? directChaseGoals(ctx, target)
         : meleeInterceptGoals(ctx, target);
@@ -3483,8 +3517,19 @@
       return cell.x !== tankCell.x || cell.y !== tankCell.y;
     });
     const dir = routeDir(ctx, tank, goals, target, "attack");
-    if (ctx.routeNeedsClear) {
+    if (ctx.routeNeedsClear && ctx.canFire?.()) {
       return { dir, fire: true, hold: true, mode: "close-melee-clear", target };
+    }
+    if (ctx.routeNeedsClear) {
+      const cooldownMove = Object.keys(DIRS)
+        .filter((candidate) => canMove(ctx, candidate) && !isMoveIntoEnemyBullet(tank, candidate, ctx.bullets || [], 12))
+        .sort((a, b) => {
+          const aBox = makeBox(tank, a, 34);
+          const bBox = makeBox(tank, b, 34);
+          return bulletRisk(aBox, ctx.bullets || [], true) - bulletRisk(bBox, ctx.bullets || [], true)
+            || dist(aBox, target) - dist(bBox, target);
+        })[0] || null;
+      return { dir: cooldownMove, fire: false, hold: !cooldownMove, mode: "close-melee-reposition", target };
     }
     if (!dir && face && canMove(ctx, face)) {
       return { dir: face, fire: false, hold: false, mode: "close-melee", target };
@@ -3654,6 +3699,8 @@
     let lastUrgencyKey = "";
     let basePocketTarget = null;
     let basePocketGate = null;
+    let lastTelemetryMode = "";
+    let lastTelemetryTarget = null;
 
     function learn(event, amount = 1) {
       const weights = memory.weights;
@@ -3686,7 +3733,7 @@
         ? 18
         : action.mode === "near-freeze" || action.mode === "urgent-freeze" ? 16
         : /midline|intercept|defend|base-anchor|base-assault/.test(action.mode || "") ? 14 : 9;
-      if (action.dir && !action.fire && action.mode !== "dodge" && isMoveIntoEnemyBullet(ctx.tank, action.dir, ctx.bullets || [], actionBulletThreshold)) {
+      if (action.dir && !action.fire && !action.mode?.includes("dodge") && isMoveIntoEnemyBullet(ctx.tank, action.dir, ctx.bullets || [], actionBulletThreshold)) {
         const bullet = incomingBullet(ctx.tank, ctx.bullets || [], ctx);
         const escape = bullet ? dodgeDir(ctx, ctx.tank, bullet) : null;
         action = escape && !isMoveIntoEnemyBullet(ctx.tank, escape, ctx.bullets || [], actionBulletThreshold)
@@ -3694,6 +3741,14 @@
           : { ...action, dir: null, hold: true, mode: `${action.mode || "move"}-hold-bullet` };
       }
       const targetChanged = action.target && action.target !== lastTarget;
+      const strategyMode = /^(kill-confirm|base-lane|early-midline|patch-base-lockdown)/.test(action.mode || "");
+      const telemetryChanged = action.mode !== lastTelemetryMode || action.target !== lastTelemetryTarget;
+      if (strategyMode && (telemetryChanged || action.fire || action.mode?.includes("clear"))) {
+        const key = `mode:${action.mode}`;
+        strategyActionCounters[key] = (strategyActionCounters[key] || 0) + 1;
+      }
+      lastTelemetryMode = action.mode || "";
+      lastTelemetryTarget = action.target || null;
       if (targetChanged) {
         directionLock = 0;
         const closeCombatTarget = action.target && dist(ctx.tank, action.target) < TILE * 3.8;
@@ -3759,8 +3814,15 @@
       const duel = risk < 8.2 ? duelShotDir(ctx, ctx.tank, target, scan.bullet) : null;
       if (duel && ctx.canFire?.()) return { dir: duel, fire: true, hold: true, mode: "duel-fire", target };
       const dir = dodgeDir(ctx, ctx.tank, scan.bullet);
-      if (dir && canMove(ctx, dir) && !isMoveIntoEnemyBullet(ctx.tank, dir, ctx.bullets || [], risk > 10 ? 8 : 11)) {
+      if (dir && canMove(ctx, dir) && (
+        !isMoveIntoEnemyBullet(ctx.tank, dir, ctx.bullets || [], risk > 10 ? 8 : 11)
+        || canClearIncomingLane(ctx.tank, dir, scan.bullet)
+      )) {
         return { dir, fire: false, hold: false, mode: "emergency-dodge", target };
+      }
+      const counter = safeShotDir(ctx, ctx.tank, target);
+      if (counter && ctx.canFire?.() && bulletDistanceToTank(ctx.tank, scan.bullet) > 42) {
+        return { dir: counter, fire: true, hold: true, mode: "emergency-counter-fire", target };
       }
       return { dir: null, fire: false, hold: true, mode: "emergency-dodge-hold", target };
     }
@@ -4000,6 +4062,7 @@
         }
         return commit(ctx, { dir, fire: false, hold: false, mode: "freeze-assault", target: freezeTarget }, dt);
       }
+      ctx.chaseStalled = targetNoProgressAge > 0.55 || targetWorkAge > 0.95;
       const immediateMeleeTarget = scan.closeCombatTarget || (anchorThreat && dist(tank, anchorThreat) < TILE * 8.6 ? anchorThreat : null);
       const immediateMeleeAction = closeCombatAction(ctx, tank, immediateMeleeTarget, name);
       if (immediateMeleeAction) {
