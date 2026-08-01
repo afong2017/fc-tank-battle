@@ -2,15 +2,16 @@
   const TILE_COST = {
     ".": 1,
     "F": 1,
-    "B": 1.05,
+    "B": 1.15,
   };
 
   function key(x, y, cols) {
     return y * cols + x;
   }
 
-  function inBaseGuard(x, y) {
-    return x >= 11 && x <= 14 && y >= 21 && y <= 23;
+  function inBaseGuard(x, y, baseGuard) {
+    const guard = baseGuard || { left: 11, top: 21, right: 14, bottom: 23 };
+    return x >= guard.left && x <= guard.right && y >= guard.top && y <= guard.bottom;
   }
 
   function tileAt(map, x, y, cols, rows) {
@@ -18,35 +19,48 @@
     return map[y]?.[x] || "S";
   }
 
-  function routeCost(map, x, y, cols, rows, allowBrickClear) {
-    if (inBaseGuard(x, y)) return Infinity;
+  function routeCost(map, x, y, cols, rows, allowBrickClear, baseGuard) {
+    if (inBaseGuard(x, y, baseGuard)) return Infinity;
     const tile = tileAt(map, x, y, cols, rows);
     if (tile === "." || tile === "F") return TILE_COST[tile];
-    if (allowBrickClear && tile === "B" && !inBaseGuard(x, y)) return TILE_COST.B;
+    if (allowBrickClear && tile === "B" && !inBaseGuard(x, y, baseGuard)) {
+      const neighbors = [
+        tileAt(map, x + 1, y, cols, rows),
+        tileAt(map, x - 1, y, cols, rows),
+        tileAt(map, x, y + 1, cols, rows),
+        tileAt(map, x, y - 1, cols, rows),
+      ].filter((value) => value === "B").length;
+      return TILE_COST.B + Math.max(0, neighbors - 1) * 0.75;
+    }
     return Infinity;
   }
 
   function steelCost(map, x, y, cols, rows) {
     let cost = 0;
     const neighbors = [
-      [x + 1, y],
-      [x - 1, y],
-      [x, y + 1],
-      [x, y - 1],
+      [x + 1, y, 1.55],
+      [x - 1, y, 1.55],
+      [x, y + 1, 1.55],
+      [x, y - 1, 1.55],
+      [x + 1, y + 1, 0.55],
+      [x - 1, y + 1, 0.55],
+      [x + 1, y - 1, 0.55],
+      [x - 1, y - 1, 0.55],
     ];
-    for (const [nx, ny] of neighbors) {
-      if (tileAt(map, nx, ny, cols, rows) === "S") cost += 0.45;
+    for (const [nx, ny, penalty] of neighbors) {
+      if (tileAt(map, nx, ny, cols, rows) === "S") cost += penalty;
     }
     return cost;
   }
 
-  function buildDistance({ map, cols, rows, goals, allowBrickClear }) {
+  function buildDistance({ map, cols, rows, goals, allowBrickClear, baseGuard }) {
     const distMap = new Array(cols * rows).fill(Infinity);
     const queue = [];
     for (const goal of goals || []) {
       if (!goal) continue;
       const x = Math.max(0, Math.min(cols - 1, goal.x | 0));
       const y = Math.max(0, Math.min(rows - 1, goal.y | 0));
+      if (!Number.isFinite(routeCost(map, x, y, cols, rows, allowBrickClear, baseGuard))) continue;
       const k = key(x, y, cols);
       distMap[k] = 0;
       queue.push({ x, y });
@@ -70,7 +84,7 @@
         { x: current.x, y: current.y - 1 },
       ];
       for (const next of neighbors) {
-        const moveCost = routeCost(map, next.x, next.y, cols, rows, allowBrickClear);
+        const moveCost = routeCost(map, next.x, next.y, cols, rows, allowBrickClear, baseGuard);
         if (!Number.isFinite(moveCost)) continue;
         const nk = key(next.x, next.y, cols);
         const total = currentCost + moveCost + steelCost(map, next.x, next.y, cols, rows);
