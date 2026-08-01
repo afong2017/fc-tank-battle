@@ -1439,17 +1439,19 @@ function clampTankMotion(tank, beforeX, beforeY, dt) {
   tank.y = beforeY;
 }
 
-function moveTank(tank, dir, dt) {
+function moveTank(tank, dir, dt, moveScale = 1) {
   if (!DIRS[dir]) return false;
-  if (!faceTankToward(tank, dir)) return false;
-  const d = DIRS[dir];
+  const facingReady = faceTankToward(tank, dir);
+  const movementDir = facingReady ? dir : tank.dir;
+  const d = DIRS[movementDir];
+  if (!d) return false;
   const speed = tankSpeedCap(tank);
   const budgetDt = Math.max(0, Math.min(dt, 0.033));
   if (tank.moveFrameId !== moveFrameId) {
     tank.moveFrameId = moveFrameId;
     tank.moveFrameDistance = 0;
   }
-  const frameBudget = speed * budgetDt;
+  const frameBudget = speed * budgetDt * clamp(Number(moveScale) || 1, 0.15, 1);
   const remaining = Math.max(0, frameBudget - (tank.moveFrameDistance || 0));
   if (remaining <= 0.01) return false;
   const step = remaining;
@@ -1457,7 +1459,7 @@ function moveTank(tank, dir, dt) {
   if (!blocked(next, tank)) {
     tank.x = next.x;
     tank.y = next.y;
-    tank.motionDir = dir;
+    tank.motionDir = movementDir;
     tank.motionUntil = performance.now() + 90;
     tank.moveFrameDistance += step;
     return true;
@@ -2697,7 +2699,7 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
     if (action.dir && action.hold) {
       fired = action.fire ? fireToward(tank, action.dir, true, action) : false;
     } else if (action.dir) {
-      moveTank(tank, action.dir, dt);
+      moveTank(tank, action.dir, dt, action.moveScale);
     }
     if (!fired && action.fire && !action.hold) {
       const shotDir = action.dir || tank.dir;
@@ -3002,27 +3004,6 @@ function lineBlockedForAttackRoute(from, to) {
   return false;
 }
 
-function appendIfRouteClear(points, point) {
-  const from = points[points.length - 1];
-  if (lineBlockedForAttackRoute(from, point)) return false;
-  points.push(point);
-  return true;
-}
-
-function appendTargetConnector(points, targetPoint) {
-  const last = points[points.length - 1];
-  const sameColumn = Math.abs(last.x - targetPoint.x) <= TILE * 0.55;
-  const sameRow = Math.abs(last.y - targetPoint.y) <= TILE * 0.55;
-  if (sameColumn) return appendIfRouteClear(points, { x: last.x, y: targetPoint.y });
-  if (sameRow) return appendIfRouteClear(points, { x: targetPoint.x, y: last.y });
-  const horizontalFirst = Math.abs(last.x - targetPoint.x) > Math.abs(last.y - targetPoint.y);
-  const first = horizontalFirst ? { x: targetPoint.x, y: last.y } : { x: last.x, y: targetPoint.y };
-  const second = { x: targetPoint.x, y: targetPoint.y };
-  if (lineBlockedForAttackRoute(last, first) || lineBlockedForAttackRoute(first, second)) return false;
-  points.push(first, second);
-  return true;
-}
-
 function isAttackRouteMode(mode = "") {
   if (/^core-(attack|freeze|intercept|melee|aim|engage|chase|evade|clear|contact|opportunity|stuck|close)/.test(mode || "")) return true;
   return /^(attack|attack-clear|long-range-fire|forward-intercept|forward-intercept-fire|forward-intercept-clear|freeze-assault|freeze-assault-fire|freeze-assault-clear|base-nearest-hunt|base-nearest-hunt-fire|base-nearest-hunt-clear|chase-break|chase-break-fire|chase-break-clear|target-execute|target-execute-fire|target-execute-clear|base-assault|base-assault-clear|base-anchor|base-anchor-fire|base-anchor-clear|close-melee|close-melee-fire|close-melee-duel|close-melee-dodge|close-melee-clear|kill-confirm|kill-confirm-fire|kill-confirm-clear|base-lane-block|base-lane-fire|base-lane-clear|base-intruder|base-intruder-fire|base-intruder-clear|base-intruder-assault|patch-base-lockdown|patch-base-lockdown-fire|patch-base-lockdown-clear)$/.test(mode || "");
@@ -3039,17 +3020,21 @@ function drawTargetLink(tank, color, reservedTargets = []) {
   const a = centerOf(tank);
   const b = centerOf(target);
   const points = [{ x: a.x, y: a.y }];
-  for (const point of route.slice(1)) {
-    const prev = points[points.length - 1];
-    if (Math.abs(prev.x - point.x) < 1 && Math.abs(prev.y - point.y) < 1) continue;
-    points.push({ x: point.x, y: point.y });
+  if (route.length > 1) {
+    for (const point of route.slice(1)) {
+      const prev = points[points.length - 1];
+      if (Math.abs(prev.x - point.x) < 1 && Math.abs(prev.y - point.y) < 1) continue;
+      points.push({ x: point.x, y: point.y });
+    }
   }
-  appendTargetConnector(points, b);
-  if (points.length < 2) {
-    const horizontalFirst = Math.abs(b.x - a.x) > Math.abs(b.y - a.y);
-    const corner = horizontalFirst ? { x: b.x, y: a.y } : { x: a.x, y: b.y };
-    if (!lineBlockedForAttackRoute(a, corner) && !lineBlockedForAttackRoute(corner, b)) points.push(corner, b);
-    else if (!lineBlockedForAttackRoute(a, b)) points.push(b);
+  const last = points[points.length - 1];
+  const sameColumn = Math.abs(last.x - b.x) <= TILE * 0.55;
+  const sameRow = Math.abs(last.y - b.y) <= TILE * 0.55;
+  const shotEnd = sameColumn
+    ? { x: last.x, y: b.y }
+    : sameRow ? { x: b.x, y: last.y } : null;
+  if (shotEnd && !lineBlockedForAttackRoute(last, shotEnd)) {
+    points.push(shotEnd);
   }
   if (points.length < 2) return target;
   ctx.save();
