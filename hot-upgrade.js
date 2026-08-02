@@ -178,7 +178,7 @@
         } else if (!sameVersion(state.version, next, "ai")) {
           await applyAiUpgrade(next);
         }
-        renderVersion(state.pendingGame);
+        renderVersion({ ...state.pendingGame, ai: next.ai });
         setStatus(state.pendingGame ? (window.FCGameHotAPI?.canApplyGameUpgrade?.() === false ? "GAME WAIT" : "GAME NEW") : "READY");
         return;
       }

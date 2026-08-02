@@ -1009,6 +1009,8 @@ function makeTank(kind, x, y) {
     turnCooldown: 0,
     motionDir: "up",
     motionUntil: 0,
+    motionSpeed: 0,
+    speedClampCount: 0,
     moveFrameId: -1,
     moveFrameDistance: 0,
     midlineRecorded: false,
@@ -1145,11 +1147,20 @@ function updateUi() {
       x: Math.round(tank.x),
       y: Math.round(tank.y),
       dir: tank.dir,
+      motionSpeed: Math.round((Number(tank.motionSpeed) || 0) * 1000) / 1000,
+      speedClamps: Math.max(0, Math.floor(Number(tank.speedClampCount) || 0)),
       mode: index ? ai2?.mode : ai1?.mode,
       target: tank.attackTarget?.alive ? { x: Math.round(tank.attackTarget.x), y: Math.round(tank.attackTarget.y), kind: tank.attackTarget.kind } : null,
       route: tank.attackRoute?.length || 0,
     } : null),
-    enemies: enemies.filter((enemy) => enemy.alive).map((enemy) => ({ x: Math.round(enemy.x), y: Math.round(enemy.y), dir: enemy.dir, kind: enemy.kind })),
+    enemies: enemies.filter((enemy) => enemy.alive).map((enemy) => ({
+      x: Math.round(enemy.x),
+      y: Math.round(enemy.y),
+      dir: enemy.dir,
+      kind: enemy.kind,
+      motionSpeed: Math.round((Number(enemy.motionSpeed) || 0) * 1000) / 1000,
+      speedClamps: Math.max(0, Math.floor(Number(enemy.speedClampCount) || 0)),
+    })),
   });
 }
 
@@ -1416,7 +1427,15 @@ function faceTankToward(tank, desiredDir) {
 }
 
 function tankSpeedCap(tank) {
-  return Math.min(tank.speed || tank.baseSpeed || 0, tank.maxSpeed || tank.baseSpeed || tank.speed || 0);
+  const kindCap = Number(MAX_TANK_SPEED[tank?.kind]);
+  const baseSpeed = Math.max(0, Number(tank?.baseSpeed) || 0);
+  const currentSpeed = Math.max(0, Number(tank?.speed) || baseSpeed);
+  const objectCap = Math.max(0, Number(tank?.maxSpeed) || baseSpeed || currentSpeed);
+  return Math.min(
+    currentSpeed,
+    objectCap,
+    Number.isFinite(kindCap) ? kindCap : objectCap,
+  );
 }
 
 function clampTankMotion(tank, beforeX, beforeY, dt) {
@@ -1424,19 +1443,28 @@ function clampTankMotion(tank, beforeX, beforeY, dt) {
   const dx = tank.x - beforeX;
   const dy = tank.y - beforeY;
   const moved = Math.hypot(dx, dy);
-  const limit = tankSpeedCap(tank) * Math.max(0, Math.min(dt, 0.033)) + 0.25;
-  if (moved <= limit || moved <= 0.01) return;
+  const frameSeconds = Math.max(0, Math.min(Number(dt) || 0, MAX_FRAME_DT));
+  const limit = tankSpeedCap(tank) * frameSeconds;
+  const motionEpsilon = 1e-6;
+  if (moved <= limit + motionEpsilon || moved <= motionEpsilon) {
+    tank.motionSpeed = frameSeconds > 0 ? moved / frameSeconds : 0;
+    return;
+  }
   const scale = limit / moved;
   const next = { x: beforeX + dx * scale, y: beforeY + dy * scale, w: tank.w, h: tank.h };
   if (!blocked(next, tank)) {
     tank.x = next.x;
     tank.y = next.y;
+    tank.motionSpeed = frameSeconds > 0 ? limit / frameSeconds : 0;
+    tank.speedClampCount = (tank.speedClampCount || 0) + 1;
     tank.motionDir = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "up" : "down");
     tank.motionUntil = performance.now() + 90;
     return;
   }
   tank.x = beforeX;
   tank.y = beforeY;
+  tank.motionSpeed = 0;
+  tank.speedClampCount = (tank.speedClampCount || 0) + 1;
 }
 
 function moveTank(tank, dir, dt, moveScale = 1) {
@@ -2673,6 +2701,13 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
   const beforeX = tank.x;
   const beforeY = tank.y;
   let action = null;
+  const committedThreat = tank.attackTarget?.alive ? tank.attackTarget : tank.lockedBaseTarget;
+  const committedBreakthrough = visibleEnemyForAlly(committedThreat)
+    && centerOf(committedThreat).y >= canvas.height * 0.5;
+  if (committedBreakthrough) {
+    tank.escapeTime = 0;
+    tank.escapeDir = null;
+  }
   if (autoControlled && tank.escapeTime > 0 && tank.escapeDir) {
     tank.aiActionMode = "core-escape";
     moveTank(tank, tank.escapeDir, dt);
@@ -2735,10 +2770,15 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
         mode: action?.mode || tank.aiActionMode || tank.attackRouteMode || null,
       });
       const escapeDir = allyUnstuckDir(tank, action?.dir || tank.dir);
-      if (escapeDir) {
+      const actionBreakthrough = action?.target?.alive
+        && centerOf(action.target).y >= canvas.height * 0.5;
+      if (escapeDir && !actionBreakthrough) {
         tank.escapeDir = escapeDir;
         tank.escapeTime = 0.62;
         tank.avoidDir = action?.dir || tank.dir;
+      } else if (actionBreakthrough) {
+        tank.escapeDir = null;
+        tank.escapeTime = 0;
       }
       tank.stuck = 0;
     }
@@ -3005,7 +3045,7 @@ function lineBlockedForAttackRoute(from, to) {
 }
 
 function isAttackRouteMode(mode = "") {
-  if (/^core-(attack|freeze|intercept|melee|aim|engage|chase|evade|clear|contact|opportunity|stuck|close)/.test(mode || "")) return true;
+  if (/^core-(attack|freeze|intercept|melee|aim|engage|chase|evade|clear|contact|opportunity|stuck|close|base|breakthrough|counter|dynamic|formation|hard|middle|path|predictive|rear|route|same|shot|steel|top|upper)/.test(mode || "")) return true;
   return /^(attack|attack-clear|long-range-fire|forward-intercept|forward-intercept-fire|forward-intercept-clear|freeze-assault|freeze-assault-fire|freeze-assault-clear|base-nearest-hunt|base-nearest-hunt-fire|base-nearest-hunt-clear|chase-break|chase-break-fire|chase-break-clear|target-execute|target-execute-fire|target-execute-clear|base-assault|base-assault-clear|base-anchor|base-anchor-fire|base-anchor-clear|close-melee|close-melee-fire|close-melee-duel|close-melee-dodge|close-melee-clear|kill-confirm|kill-confirm-fire|kill-confirm-clear|base-lane-block|base-lane-fire|base-lane-clear|base-intruder|base-intruder-fire|base-intruder-clear|base-intruder-assault|patch-base-lockdown|patch-base-lockdown-fire|patch-base-lockdown-clear)$/.test(mode || "");
 }
 

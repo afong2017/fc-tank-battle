@@ -68,7 +68,7 @@ function fileInfo(name) {
     version: updatedAtBeijing.replace(/\D/g, ""),
     file: name,
     hash: crypto.createHash("sha1").update(content).digest("hex"),
-    updatedAtBeijing: updatedAtBeijing + " CST",
+    updatedAtBeijing: updatedAtBeijing.replace(/:\d{2}$/, "") + " CST",
   };
 }
 
