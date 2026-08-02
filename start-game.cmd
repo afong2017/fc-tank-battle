@@ -13,7 +13,7 @@ if errorlevel 1 (
   )
 )
 
-powershell -NoProfile -Command "$root=[IO.Path]::GetFullPath('%ROOT%'); $c=Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if(-not $c){exit 1}; $p=Get-CimInstance Win32_Process -Filter ('ProcessId=' + $c.OwningProcess) -ErrorAction SilentlyContinue; if($p.CommandLine -and $p.CommandLine.Contains($root) -and $p.CommandLine.Contains('dev-server.js')){exit 0}; exit 2" >nul 2>nul
+powershell -NoProfile -Command "$c=Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if(-not $c){exit 1}; try { $v=Invoke-RestMethod -Uri 'http://127.0.0.1:8080/version' -TimeoutSec 2; if($v.ai.files -contains 'ai-data.js' -and $v.game.files -contains 'game.js'){exit 0} } catch {}; exit 2" >nul 2>nul
 set "SERVER_STATE=%ERRORLEVEL%"
 if "%SERVER_STATE%"=="0" goto open_game
 if "%SERVER_STATE%"=="2" (

@@ -9,6 +9,10 @@
   const EVENT_LIMIT = 2400;
   const MATCH_LIMIT = 512;
   const CORE_DATA_VERSION = 2;
+  const ANALYTICS_VERSION = 2;
+  const ANALYTICS_BUILD_LIMIT = 32;
+  const TRACKED_MODE_EVENTS = new Set(["ally_death", "base_hit", "enemy_killed", "enemy_cross_midline"]);
+  const MEMORY_SYNC_DELAY = 12000;
   const defaults = {
     weights: { defend: 5, survive: 5, attack: 5, clear: 5 },
     bestWeights: { defend: 5, survive: 5, attack: 5, clear: 5 },
@@ -30,6 +34,9 @@
   };
   let disposed = false;
   let syncTimer = null;
+  let syncRequest = null;
+  let pendingEvents = [];
+  let pendingMatches = [];
   let memory = normalizeMemory(previous?.readMemory?.() || readLocal(MEMORY_KEY) || readLocal(LEGACY_MEMORY_KEY) || defaults);
   let experience = normalizeExperience(previous?.readExperience?.() || readLocal(EXPERIENCE_KEY) || {});
   let training = normalizeTraining(previous?.readTraining?.() || {});
@@ -83,6 +90,134 @@
       .slice(-EVENT_LIMIT);
   }
 
+  function cleanModeCounters(value = {}) {
+    const result = {};
+    for (const [type, modes] of Object.entries(value || {})) {
+      if (!TRACKED_MODE_EVENTS.has(type) || !modes || typeof modes !== "object") continue;
+      result[type] = Object.fromEntries(Object.entries(modes)
+        .filter(([mode, count]) => isCurrentMode(mode) && Number(count) > 0)
+        .map(([mode, count]) => [mode, Math.max(0, Math.floor(Number(count) || 0))]));
+    }
+    return result;
+  }
+
+  function emptyAnalyticsBucket() {
+    return { games: 0, wins: 0, losses: 0, durationTotal: 0, counters: {}, stages: {}, modeCounters: {}, baseHitByEnemy: {} };
+  }
+
+  function normalizeAnalyticsBucket(value = {}) {
+    const bucket = emptyAnalyticsBucket();
+    bucket.games = Math.max(0, Math.floor(Number(value.games) || 0));
+    bucket.wins = Math.max(0, Math.floor(Number(value.wins) || 0));
+    bucket.losses = Math.max(0, Math.floor(Number(value.losses) || 0));
+    bucket.durationTotal = Math.max(0, Number(value.durationTotal) || 0);
+    bucket.counters = cleanCounters(value.counters);
+    bucket.modeCounters = cleanModeCounters(value.modeCounters);
+    bucket.baseHitByEnemy = Object.fromEntries(Object.entries(value.baseHitByEnemy || {})
+      .filter(([, count]) => Number(count) > 0)
+      .map(([kind, count]) => [String(kind).slice(0, 16), Math.max(0, Math.floor(Number(count) || 0))]));
+    for (const [stage, stats] of Object.entries(value.stages || {})) {
+      const stageNumber = Math.max(1, Math.floor(Number(stage) || 1));
+      bucket.stages[String(stageNumber)] = {
+        games: Math.max(0, Math.floor(Number(stats?.games) || 0)),
+        wins: Math.max(0, Math.floor(Number(stats?.wins) || 0)),
+        losses: Math.max(0, Math.floor(Number(stats?.losses) || 0)),
+        durationTotal: Math.max(0, Number(stats?.durationTotal) || 0),
+      };
+    }
+    return bucket;
+  }
+
+  function addMatchToBucket(bucket, match) {
+    const win = match?.result === "win";
+    const stageKey = String(Math.max(1, Math.floor(Number(match?.stage) || 1)));
+    const duration = Math.max(0, Number(match?.duration) || 0);
+    bucket.games++;
+    bucket[win ? "wins" : "losses"]++;
+    bucket.durationTotal = Math.round((bucket.durationTotal + duration) * 10) / 10;
+    const stage = bucket.stages[stageKey] || { games: 0, wins: 0, losses: 0, durationTotal: 0 };
+    stage.games++;
+    stage[win ? "wins" : "losses"]++;
+    stage.durationTotal = Math.round((stage.durationTotal + duration) * 10) / 10;
+    bucket.stages[stageKey] = stage;
+    for (const [key, count] of Object.entries(cleanCounters(match?.counters))) {
+      bucket.counters[key] = (bucket.counters[key] || 0) + Math.max(0, Math.floor(Number(count) || 0));
+    }
+    for (const [type, modes] of Object.entries(cleanModeCounters(match?.modeCounters))) {
+      const target = bucket.modeCounters[type] || {};
+      for (const [mode, count] of Object.entries(modes)) target[mode] = (target[mode] || 0) + count;
+      bucket.modeCounters[type] = target;
+    }
+  }
+
+  function currentBuild() {
+    const info = window.FCHotUpgradeVersion?.ai || {};
+    const version = String(info.version || "UNVERSIONED").slice(0, 32);
+    return {
+      id: String(info.hash || version).slice(0, 64),
+      version,
+      developer: String(info.developer || "CODEX").slice(0, 24),
+      model: String(info.model || "UNKNOWN").slice(0, 48),
+      updatedAtBeijing: String(info.updatedAtBeijing || "UNKNOWN").slice(0, 40),
+    };
+  }
+
+  function rebuildAnalytics(matches) {
+    const analytics = { version: ANALYTICS_VERSION, generatedAt: Date.now(), total: emptyAnalyticsBucket(), builds: [] };
+    if (!matches.length) return analytics;
+    const legacy = {
+      id: "LEGACY",
+      version: "LEGACY",
+      developer: "UNKNOWN",
+      model: "UNKNOWN",
+      updatedAtBeijing: "UNKNOWN",
+      firstStartedAt: 0,
+      lastEndedAt: 0,
+      ...emptyAnalyticsBucket(),
+    };
+    for (const match of matches) {
+      addMatchToBucket(analytics.total, match);
+      addMatchToBucket(legacy, match);
+    }
+    legacy.firstStartedAt = Number(matches[0]?.startedAt) || 0;
+    legacy.lastEndedAt = Number(matches[matches.length - 1]?.endedAt) || 0;
+    analytics.builds.push(legacy);
+    return analytics;
+  }
+
+  function normalizeAnalytics(value, matches) {
+    if (Number(value?.version) !== ANALYTICS_VERSION || !Array.isArray(value?.builds)) return rebuildAnalytics(matches);
+    return {
+      version: ANALYTICS_VERSION,
+      generatedAt: Math.max(0, Number(value.generatedAt) || 0),
+      total: normalizeAnalyticsBucket(value.total),
+      builds: value.builds.slice(-ANALYTICS_BUILD_LIMIT).map((build) => ({
+        id: String(build?.id || "UNKNOWN").slice(0, 64),
+        version: String(build?.version || "UNKNOWN").slice(0, 32),
+        developer: String(build?.developer || "UNKNOWN").slice(0, 24),
+        model: String(build?.model || "UNKNOWN").slice(0, 48),
+        updatedAtBeijing: String(build?.updatedAtBeijing || "UNKNOWN").slice(0, 40),
+        firstStartedAt: Math.max(0, Number(build?.firstStartedAt) || 0),
+        lastEndedAt: Math.max(0, Number(build?.lastEndedAt) || 0),
+        ...normalizeAnalyticsBucket(build),
+      })),
+    };
+  }
+
+  function indexFinishedMatch(match) {
+    const build = match.build || currentBuild();
+    experience.analytics.generatedAt = Date.now();
+    addMatchToBucket(experience.analytics.total, match);
+    let bucket = experience.analytics.builds.find((item) => item.id === build.id);
+    if (!bucket) {
+      bucket = { ...build, ...emptyAnalyticsBucket(), firstStartedAt: Number(match.startedAt) || Date.now(), lastEndedAt: 0 };
+      experience.analytics.builds.push(bucket);
+      experience.analytics.builds = experience.analytics.builds.slice(-ANALYTICS_BUILD_LIMIT);
+    }
+    bucket.lastEndedAt = Number(match.endedAt) || Date.now();
+    addMatchToBucket(bucket, match);
+  }
+
   function normalizeMemory(value = {}) {
     const currentCoreData = Number(value.coreDataVersion) === CORE_DATA_VERSION;
     return {
@@ -103,15 +238,22 @@
   }
 
   function normalizeExperience(value = {}) {
+    const matches = Array.isArray(value.matches) ? value.matches.slice(-MATCH_LIMIT).map((match) => ({
+      ...match,
+      counters: cleanCounters(match?.counters),
+      modeCounters: cleanModeCounters(match?.modeCounters),
+    })) : [];
     return {
-      version: 2,
+      version: 3,
       games: Math.max(0, Math.floor(Number(value.games) || 0)),
       events: cleanEvents(value.events),
-      matches: Array.isArray(value.matches) ? value.matches.slice(-MATCH_LIMIT) : [],
+      matches,
       counters: cleanCounters(value.counters),
+      analytics: normalizeAnalytics(value.analytics, matches),
       currentMatch: value.currentMatch ? {
         ...value.currentMatch,
         counters: cleanCounters(value.currentMatch.counters),
+        modeCounters: cleanModeCounters(value.currentMatch.modeCounters),
       } : null,
     };
   }
@@ -155,8 +297,20 @@
     }));
   }
 
-  function payload() {
-    return { memory, experience, training };
+  function deltaPayload(events, matches) {
+    return {
+      delta: true,
+      memory,
+      training,
+      experience: {
+        version: experience.version,
+        games: experience.games,
+        counters: experience.counters,
+        currentMatch: experience.currentMatch,
+        events,
+        matches,
+      },
+    };
   }
 
   function saveLocal() {
@@ -172,28 +326,38 @@
     if (!serverMode() || syncTimer) return;
     syncTimer = setTimeout(() => {
       syncTimer = null;
-      fetch(FILE_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload()),
-      }).catch(() => {});
-    }, 4000);
+      postDelta();
+    }, MEMORY_SYNC_DELAY);
+  }
+
+  function postDelta() {
+    if (!serverMode() || syncRequest) return syncRequest;
+    const events = pendingEvents.slice();
+    const matches = pendingMatches.slice();
+    syncRequest = fetch(FILE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(deltaPayload(events, matches)),
+    }).then((response) => {
+      if (!response.ok) throw new Error(`AI memory sync ${response.status}`);
+      const sentEvents = new Set(events);
+      const sentMatches = new Set(matches);
+      pendingEvents = pendingEvents.filter((item) => !sentEvents.has(item));
+      pendingMatches = pendingMatches.filter((item) => !sentMatches.has(item));
+    }).catch(() => {}).finally(() => { syncRequest = null; });
+    return syncRequest;
   }
 
   function syncMemoryFileNow() {
     saveLocal();
     if (!serverMode()) return;
-    const body = JSON.stringify(payload());
-    try {
-      if (navigator.sendBeacon?.(FILE_URL, new Blob([body], { type: "application/json" }))) return;
-    } catch {}
-    fetch(FILE_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+    postDelta();
   }
 
   async function restoreMemoryFile() {
     if (!serverMode()) return;
     try {
-      const response = await fetch(`${FILE_URL}?v=${Date.now()}`, { cache: "no-store" });
+      const response = await fetch(`${FILE_URL}/runtime?v=${Date.now()}`, { cache: "no-store" });
       if (!response.ok) return;
       const data = await response.json();
       memory = normalizeMemory(data.memory || memory);
@@ -212,18 +376,28 @@
       startedAt: Date.now(),
       events: 0,
       counters: {},
+      modeCounters: {},
+      build: currentBuild(),
     };
     syncMemoryFile();
   }
 
   function recordExperience(type, detail = {}) {
     if (!type) return;
-    const match = experience.currentMatch || { id: `${Date.now()}-${experience.games}`, stage: detail.stage || 1, events: 0, counters: {} };
+    const match = experience.currentMatch || {
+      id: `${Date.now()}-${experience.games}`, stage: detail.stage || 1, events: 0, counters: {}, modeCounters: {}, build: currentBuild(),
+    };
     match.events++;
     match.counters[type] = (match.counters[type] || 0) + 1;
     experience.counters[type] = (experience.counters[type] || 0) + 1;
+    const mode = isCurrentMode(detail.mode) ? detail.mode : null;
+    if (mode && TRACKED_MODE_EVENTS.has(type)) {
+      match.modeCounters ||= {};
+      match.modeCounters[type] ||= {};
+      match.modeCounters[type][mode] = (match.modeCounters[type][mode] || 0) + 1;
+    }
     experience.currentMatch = match;
-    experience.events.push({
+    const event = {
       matchId: match.id,
       stage: detail.stage ?? match.stage,
       time: Math.round((Number(detail.time) || 0) * 10) / 10,
@@ -232,7 +406,7 @@
       ally: compact(detail.ally),
       enemy: compact(detail.enemy),
       target: compact(detail.target),
-      mode: detail.mode || null,
+      mode,
       reason: detail.reason || null,
       distance: Number.isFinite(detail.distance) ? Math.round(detail.distance) : null,
       bulletDir: detail.bulletDir || null,
@@ -241,7 +415,9 @@
       historySamples: type === "base_hit" ? Math.max(0, Math.floor(Number(detail.historySamples) || 0)) : null,
       historySeconds: type === "base_hit" ? Math.round((Number(detail.historySeconds) || 0) * 10) / 10 : null,
       createdAt: Date.now(),
-    });
+    };
+    experience.events.push(event);
+    pendingEvents.push(event);
     experience.events = experience.events.slice(-EVENT_LIMIT);
     syncMemoryFile();
   }
@@ -299,7 +475,7 @@
         memory.highestStageCleared = Math.max(memory.highestStageCleared, stage);
         memory.highestStageUpdatedAt = Date.now();
       }
-      experience.matches.push({
+      const summary = {
         id: match.id,
         stage,
         result: match.result,
@@ -308,7 +484,12 @@
         endedAt: match.endedAt,
         events: match.events,
         counters: cleanCounters(match.counters),
-      });
+        modeCounters: cleanModeCounters(match.modeCounters),
+        build: match.build || currentBuild(),
+      };
+      indexFinishedMatch(summary);
+      experience.matches.push(summary);
+      pendingMatches.push(summary);
       experience.matches = experience.matches.slice(-MATCH_LIMIT);
     }
     memory.games = Math.max(Number(memory.games) || 0, experience.games);
@@ -317,13 +498,21 @@
   }
 
   function readExperienceDbStats() {
-    return Promise.resolve({ available: false, events: experience.events.length, matches: experience.games });
+    return Promise.resolve({
+      available: true,
+      events: experience.events.length,
+      matches: experience.games,
+      indexedMatches: experience.analytics.total.games,
+      builds: experience.analytics.builds.length,
+    });
   }
 
   function resetMemory() {
     memory = normalizeMemory(defaults);
     experience = normalizeExperience({});
     training = normalizeTraining({});
+    pendingEvents = [];
+    pendingMatches = [];
     syncMemoryFileNow();
   }
 

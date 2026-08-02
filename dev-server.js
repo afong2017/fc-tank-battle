@@ -4,6 +4,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { AiDatabase } = require("./ai-database");
 
 const ROOT = __dirname;
 
@@ -32,7 +33,7 @@ const AI_META = {
 const GAME_FILES = ["game.js", "index.html", "style.css", "hot-upgrade.js", "ai-worker.js"];
 const AI_FILES = ["ai-core.js", "ai-data.js"];
 const AI_MEMORY_FILE = path.join(ROOT, "ai-memory.json");
-const AI_MEMORY_TEMP_FILE = path.join(ROOT, "ai-memory.json.tmp");
+const AI_DATABASE_FILE = path.join(ROOT, "ai-memory.db");
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -114,24 +115,7 @@ function readJsonBody(req) {
   });
 }
 
-let aiMemoryCache = null;
-let aiMemoryJsonCache = null;
-
-function readAiMemory() {
-  if (aiMemoryCache) return aiMemoryCache;
-  if (!fs.existsSync(AI_MEMORY_FILE)) {
-    aiMemoryCache = { version: 1, memory: null, experience: null };
-  } else {
-    aiMemoryCache = JSON.parse(fs.readFileSync(AI_MEMORY_FILE, "utf8").replace(/^\uFEFF/, ""));
-  }
-  aiMemoryJsonCache = JSON.stringify(aiMemoryCache);
-  return aiMemoryCache;
-}
-
-function readAiMemoryJson() {
-  readAiMemory();
-  return aiMemoryJsonCache;
-}
+const aiDatabase = new AiDatabase(AI_DATABASE_FILE, AI_MEMORY_FILE);
 
 function sanitizeAiData(data) {
   if (!data?.experience) return data;
@@ -158,10 +142,10 @@ function sanitizeAiData(data) {
 
 function writeAiMemory(data) {
   data = sanitizeAiData(data);
-  let existing = {};
-  try {
-    existing = readAiMemory();
-  } catch {}
+  const existing = {
+    memory: aiDatabase.getState("memory", {}),
+    training: aiDatabase.getState("training", {}),
+  };
   const trainingGeneration = Number(existing?.training?.generation) || 0;
   const incomingTrainingGeneration = Number(data?.training?.generation) || 0;
   if (trainingGeneration && data?.training && incomingTrainingGeneration !== trainingGeneration) {
@@ -179,17 +163,7 @@ function writeAiMemory(data) {
       },
     };
   }
-  const payload = {
-    ...existing,
-    version: 1,
-    updatedAt: new Date().toISOString(),
-    ...data,
-  };
-  aiMemoryCache = payload;
-  aiMemoryJsonCache = JSON.stringify(payload);
-  fs.writeFileSync(AI_MEMORY_TEMP_FILE, aiMemoryJsonCache, "utf8");
-  fs.renameSync(AI_MEMORY_TEMP_FILE, AI_MEMORY_FILE);
-  return payload;
+  return aiDatabase.write(data);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -206,11 +180,48 @@ const server = http.createServer(async (req, res) => {
 
     if (req.url.startsWith("/ai-memory")) {
       if (req.method === "GET") {
+        if (pathname === "/ai-memory/runtime") {
+          res.writeHead(200, {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+          res.end(JSON.stringify(aiDatabase.read(true)));
+          return;
+        }
+        if (pathname === "/ai-memory/analytics") {
+          res.writeHead(200, {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+          res.end(JSON.stringify({
+            updatedAt: aiDatabase.getMeta("updated_at"),
+            analytics: aiDatabase.readAnalytics(),
+            currentMatch: aiDatabase.getState("experience_meta", {})?.currentMatch || null,
+          }));
+          return;
+        }
+        if (pathname === "/ai-memory/compare") {
+          const requestUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+          const cutoff = Math.max(0, Number(requestUrl.searchParams.get("cutoff")) || 0);
+          if (!cutoff) {
+            res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+            res.end(JSON.stringify({ ok: false, error: "cutoff timestamp is required" }));
+            return;
+          }
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+          res.end(JSON.stringify(aiDatabase.compare(cutoff)));
+          return;
+        }
+        if (pathname === "/ai-memory/stats") {
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+          res.end(JSON.stringify(aiDatabase.stats()));
+          return;
+        }
         res.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
         });
-        res.end(readAiMemoryJson());
+        res.end(JSON.stringify(aiDatabase.read(false)));
         return;
       }
       if (req.method === "POST") {
@@ -254,3 +265,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`FC Tank Battle dev server: http://127.0.0.1:${PORT}`);
 });
+
+module.exports = { server, aiDatabase };
