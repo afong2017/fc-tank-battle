@@ -4,7 +4,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { DatabaseSync } = require("node:sqlite");
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const EVENT_LIMIT = 200000;
 const MATCH_LIMIT = 20000;
 const RUNTIME_EVENT_LIMIT = 2400;
@@ -29,7 +29,7 @@ function enemyKind(event) {
 }
 
 function emptyBucket() {
-  return { games: 0, wins: 0, losses: 0, durationTotal: 0, counters: {}, stages: {}, modeCounters: {}, baseHitByEnemy: {} };
+  return { games: 0, wins: 0, losses: 0, durationTotal: 0, counters: {}, stages: {}, modeCounters: {}, baseHitByEnemy: {}, runModes: {} };
 }
 
 function addCount(target, key, value) {
@@ -72,7 +72,10 @@ class AiDatabase {
         build_version TEXT NOT NULL,
         build_developer TEXT NOT NULL,
         build_model TEXT NOT NULL,
-        build_updated_at TEXT NOT NULL
+        build_updated_at TEXT NOT NULL,
+        run_mode TEXT NOT NULL DEFAULT 'NORMAL',
+        test_speed REAL NOT NULL DEFAULT 1,
+        test_muted INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
@@ -92,6 +95,11 @@ class AiDatabase {
       CREATE INDEX IF NOT EXISTS idx_events_type_kind ON events(type, enemy_kind, created_at);
       CREATE INDEX IF NOT EXISTS idx_events_type_mode ON events(type, mode, created_at);
     `);
+    const matchColumns = new Set(this.db.prepare("PRAGMA table_info(matches)").all().map((column) => column.name));
+    if (!matchColumns.has("run_mode")) this.db.exec("ALTER TABLE matches ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'NORMAL'");
+    if (!matchColumns.has("test_speed")) this.db.exec("ALTER TABLE matches ADD COLUMN test_speed REAL NOT NULL DEFAULT 1");
+    if (!matchColumns.has("test_muted")) this.db.exec("ALTER TABLE matches ADD COLUMN test_muted INTEGER NOT NULL DEFAULT 0");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_matches_run_mode ON matches(run_mode, ended_at)");
     this.setMeta("schema_version", String(SCHEMA_VERSION));
   }
 
@@ -124,17 +132,21 @@ class AiDatabase {
   insertMatch(match) {
     if (!match?.id) return;
     const build = match.build || {};
+    const run = match.run || {};
+    const speed = Math.max(1, Math.min(8, Number(run.speed) || 1));
+    const runMode = run.mode === "TEST" || speed > 1 ? "TEST" : "NORMAL";
     this.db.prepare(`
       INSERT INTO matches(
         id, stage, result, duration, started_at, ended_at, event_count, counters_json, mode_counters_json,
-        build_id, build_version, build_developer, build_model, build_updated_at
-      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        build_id, build_version, build_developer, build_model, build_updated_at, run_mode, test_speed, test_muted
+      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         stage=excluded.stage, result=excluded.result, duration=excluded.duration, started_at=excluded.started_at,
         ended_at=excluded.ended_at, event_count=excluded.event_count, counters_json=excluded.counters_json,
         mode_counters_json=excluded.mode_counters_json, build_id=excluded.build_id,
         build_version=excluded.build_version, build_developer=excluded.build_developer,
-        build_model=excluded.build_model, build_updated_at=excluded.build_updated_at
+        build_model=excluded.build_model, build_updated_at=excluded.build_updated_at,
+        run_mode=excluded.run_mode, test_speed=excluded.test_speed, test_muted=excluded.test_muted
     `).run(
       String(match.id), Math.max(1, Number(match.stage) || 1), String(match.result || "lose"),
       Math.max(0, Number(match.duration) || 0), Math.max(0, Number(match.startedAt) || 0),
@@ -142,6 +154,7 @@ class AiDatabase {
       json(match.counters, {}), json(match.modeCounters, {}), String(build.id || "LEGACY"),
       String(build.version || "LEGACY"), String(build.developer || "UNKNOWN"),
       String(build.model || "UNKNOWN"), String(build.updatedAtBeijing || "UNKNOWN"),
+      runMode, speed, run.muted ? 1 : 0,
     );
   }
 
@@ -210,6 +223,11 @@ class AiDatabase {
         model: row.build_model,
         updatedAtBeijing: row.build_updated_at,
       },
+      run: {
+        mode: row.run_mode || "NORMAL",
+        speed: Math.max(1, Number(row.test_speed) || 1),
+        muted: Boolean(row.test_muted),
+      },
     };
   }
 
@@ -237,6 +255,8 @@ class AiDatabase {
       bucket.games++;
       bucket[win ? "wins" : "losses"]++;
       bucket.durationTotal = Math.round((bucket.durationTotal + Number(row.duration || 0)) * 10) / 10;
+      const runLabel = row.run_mode === "TEST" ? `TEST ${Math.max(1, Number(row.test_speed) || 1)}X` : "NORMAL";
+      addCount(bucket.runModes, runLabel, 1);
       const counters = parse(row.counters_json, {});
       for (const [key, value] of Object.entries(counters)) addCount(bucket.counters, key, value);
       const stageKey = String(row.stage);
@@ -310,6 +330,15 @@ class AiDatabase {
       combined.durationTotal = Math.round((combined.durationTotal + stage.durationTotal) * 10) / 10;
       total.stages[key] = combined;
     }
+    const runRows = this.db.prepare(`
+      SELECT build_id, run_mode, test_speed, COUNT(*) count
+      FROM matches GROUP BY build_id, run_mode, test_speed
+    `).all();
+    for (const row of runRows) {
+      const label = row.run_mode === "TEST" ? `TEST ${Math.max(1, Number(row.test_speed) || 1)}X` : "NORMAL";
+      addCount(builds.get(row.build_id).runModes, label, row.count);
+      addCount(total.runModes, label, row.count);
+    }
     const counterRows = this.db.prepare(`
       SELECT m.build_id build_id, j.key counter_key, SUM(CAST(j.value AS INTEGER)) count
       FROM matches m, json_each(m.counters_json) j GROUP BY m.build_id, j.key
@@ -339,7 +368,7 @@ class AiDatabase {
         addCount(total.modeCounters[type], mode, row.count);
       }
     }
-    return { version: 2, generatedAt: Date.now(), total, builds: Array.from(builds.values()).slice(-32) };
+    return { version: 3, generatedAt: Date.now(), total, builds: Array.from(builds.values()).slice(-32) };
   }
 
   compare(cutoff) {
@@ -361,12 +390,18 @@ class AiDatabase {
 
   stats() {
     const files = [this.file, `${this.file}-wal`, `${this.file}-shm`];
+    const runModes = Object.fromEntries(this.db.prepare(`
+      SELECT CASE WHEN run_mode = 'TEST' THEN 'TEST ' || printf('%g', test_speed) || 'X' ELSE 'NORMAL' END label,
+             COUNT(*) count
+      FROM matches GROUP BY label ORDER BY label
+    `).all().map((row) => [row.label, Number(row.count)]));
     return {
       available: true,
       engine: "sqlite",
       schemaVersion: SCHEMA_VERSION,
       events: Number(this.db.prepare("SELECT COUNT(*) count FROM events").get().count),
       matches: Number(this.db.prepare("SELECT COUNT(*) count FROM matches").get().count),
+      runModes,
       eventLimit: EVENT_LIMIT,
       matchLimit: MATCH_LIMIT,
       fileBytes: files.reduce((total, file) => total + (fs.existsSync(file) ? fs.statSync(file).size : 0), 0),

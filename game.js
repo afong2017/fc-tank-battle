@@ -62,6 +62,13 @@ const LIFE_MIN = 3;
 const LIFE_MAX = 100;
 const FIXED_DT = 1 / 60;
 const MAX_FRAME_DT = 0.033;
+const INTERNAL_TEST_PARAMS = new URLSearchParams(location.search);
+const INTERNAL_TEST_SPEED = location.hostname === "127.0.0.1" || location.hostname === "localhost"
+  ? clamp(Number(INTERNAL_TEST_PARAMS.get("testSpeed")) || 1, 1, 8)
+  : 1;
+const INTERNAL_TEST_MUTED = INTERNAL_TEST_PARAMS.get("testMute") === "1";
+const INTERNAL_TEST_RENDER_INTERVAL_MS = 50;
+const NORMAL_RENDER_INTERVAL_MS = 1000 / 60;
 const TRAINING_STATS_KEY = "fc-tank-battle.ai-training-stats";
 const LEGACY_TRAINING_STATS_KEYS = ["fc-tank-battle.ai-training-stats.v2", "fc-tank-battle.ai-training-stats.v1"];
 const TRAINING_AUTO_ARMED_KEY = "fc-tank-battle.training-auto-armed";
@@ -86,6 +93,7 @@ let menuRepeat = {
   y: { dir: 0, wait: 0 },
 };
 let lastTime = 0;
+let lastDrawTime = 0;
 let updateAccumulator = 0;
 let moveFrameId = 0;
 let state = "title";
@@ -113,6 +121,14 @@ let lastEnemyMeterSlots = -1;
 let spawnClock = 0;
 let freezeClock = 0;
 let shake = 0;
+
+function currentRunContext() {
+  return {
+    mode: INTERNAL_TEST_SPEED > 1 ? "TEST" : "NORMAL",
+    speed: INTERNAL_TEST_SPEED,
+    muted: INTERNAL_TEST_MUTED,
+  };
+}
 
 const colors = {
   brick: "#b65c35",
@@ -888,7 +904,7 @@ function newAudio() {
 }
 
 function tone(freq, duration, type = "square", gain = 0.08, slide = 1) {
-  if (!audio) return;
+  if (!audio || INTERNAL_TEST_MUTED) return;
   const osc = audio.createOscillator();
   const amp = audio.createGain();
   const now = audio.currentTime;
@@ -1019,6 +1035,85 @@ function makeTank(kind, x, y) {
       return { x: this.x, y: this.y, w: this.w, h: this.h };
     },
   };
+}
+
+function nearestOpenTankPosition(tank, originX, originY) {
+  const candidates = [];
+  const maxRadius = Math.max(COLS, ROWS);
+  for (let radius = 0; radius <= maxRadius; radius++) {
+    for (let dy = -radius; dy <= radius; dy++) {
+      const dx = radius - Math.abs(dy);
+      const offsets = dx === 0 ? [[0, dy]] : [[-dx, dy], [dx, dy]];
+      for (const [offsetX, offsetY] of offsets) {
+        candidates.push({
+          x: originX + offsetX * TILE,
+          y: originY + offsetY * TILE,
+        });
+      }
+    }
+  }
+  return candidates.find((position) => !blocked({
+    x: position.x,
+    y: position.y,
+    w: tank.w,
+    h: tank.h,
+  }, tank)) || null;
+}
+
+function makeTankAtSafeSpawn(kind, x, y) {
+  const tank = makeTank(kind, x, y);
+  const position = nearestOpenTankPosition(tank, x, y);
+  if (position) {
+    tank.x = position.x;
+    tank.y = position.y;
+    tank.lastX = position.x;
+    tank.lastY = position.y;
+  }
+  return tank;
+}
+
+function resolveAllyOverlap() {
+  if (!player?.alive || !player2?.alive || !rects(player.box(), player2.box())) return;
+  const mover = player2;
+  const overlapX = Math.min(player.x + player.w, player2.x + player2.w) - Math.max(player.x, player2.x);
+  const overlapY = Math.min(player.y + player.h, player2.y + player2.h) - Math.max(player.y, player2.y);
+  const horizontalSign = centerOf(player2).x < centerOf(player).x ? -1 : 1;
+  const verticalSign = centerOf(player2).y < centerOf(player).y ? -1 : 1;
+  const corrections = overlapX <= overlapY
+    ? [
+        { x: horizontalSign * (overlapX + 0.5), y: 0 },
+        { x: -horizontalSign * (overlapX + 0.5), y: 0 },
+        { x: 0, y: verticalSign * (overlapY + 0.5) },
+        { x: 0, y: -verticalSign * (overlapY + 0.5) },
+      ]
+    : [
+        { x: 0, y: verticalSign * (overlapY + 0.5) },
+        { x: 0, y: -verticalSign * (overlapY + 0.5) },
+        { x: horizontalSign * (overlapX + 0.5), y: 0 },
+        { x: -horizontalSign * (overlapX + 0.5), y: 0 },
+      ];
+  for (const correction of corrections) {
+    const next = {
+      x: mover.x + correction.x,
+      y: mover.y + correction.y,
+      w: mover.w,
+      h: mover.h,
+    };
+    if (!blocked(next, mover)) {
+      mover.x = next.x;
+      mover.y = next.y;
+      mover.lastX = next.x;
+      mover.lastY = next.y;
+      return;
+    }
+  }
+  const fallback = nearestOpenTankPosition(mover, mover.x, mover.y);
+  if (fallback) {
+    mover.x = fallback.x;
+    mover.y = fallback.y;
+    mover.lastX = fallback.x;
+    mover.lastY = fallback.y;
+  }
 }
 
 function loadStage() {
@@ -1351,7 +1446,7 @@ function startGame() {
   gameVersion = 1;
   state = "playing";
   overlay.classList.add("hidden");
-  window.TankPartnerAI?.startMatch?.({ stage: stageIndex + 1 });
+  window.TankPartnerAI?.startMatch?.({ stage: stageIndex + 1, run: currentRunContext() });
   loadStage();
   sfx.start();
 }
@@ -1917,7 +2012,7 @@ function hitTank(tank, bullet) {
       teachAis("player-death", -0.9);
       if (lives !== Infinity) lives = Math.max(0, lives - 1);
       if (lives === Infinity || lives > 0) {
-        player = makeTank("player", 8 * TILE + 2, 22 * TILE + 2);
+        player = makeTankAtSafeSpawn("player", 8 * TILE + 2, 22 * TILE + 2);
         player.invuln = 2.4;
       } else if (!player2?.alive) {
         endGame(false);
@@ -1927,7 +2022,7 @@ function hitTank(tank, bullet) {
       teachAis("partner-death", -0.9);
       if (lives2 !== Infinity) lives2 = Math.max(0, lives2 - 1);
       if (lives2 === Infinity || lives2 > 0) {
-        player2 = makeTank("player2", 16 * TILE + 2, 22 * TILE + 2);
+        player2 = makeTankAtSafeSpawn("player2", 16 * TILE + 2, 22 * TILE + 2);
         player2.invuln = 2.4;
       } else if (!player?.alive) {
         endGame(false);
@@ -2434,7 +2529,7 @@ function endGame(win) {
     window.TankPartnerAI?.syncMemoryFileNow?.();
   }
   saveTrainingStats();
-  window.TankPartnerAI?.finishMatch?.({ win, duration: gameTime, stage: stageIndex + 1 });
+  window.TankPartnerAI?.finishMatch?.({ win, duration: gameTime, stage: stageIndex + 1, run: currentRunContext() });
   overlay.classList.remove("hidden");
   ui.overlayTitle.textContent = win ? "STAGE CLEAR" : "GAME OVER";
   ui.overlayPrompt.textContent = aiTrainingEnabled ? "AI TRAIN 自动开始下一局" : "按 Enter / Xbox Start 重新开始";
@@ -2453,7 +2548,7 @@ function nextStage() {
     window.TankPartnerAI?.incrementTrainingGames?.();
     saveTrainingStats();
   }
-  window.TankPartnerAI?.finishMatch?.({ win: true, duration: gameTime, stage: stageIndex + 1 });
+  window.TankPartnerAI?.finishMatch?.({ win: true, duration: gameTime, stage: stageIndex + 1, run: currentRunContext() });
   window.TankPartnerAI?.syncMemoryFileNow?.();
   stageIndex++;
   if (autoUpgradeEnabled) gameVersion++;
@@ -2461,7 +2556,7 @@ function nextStage() {
     stageIndex = 0;
     completedLoops++;
   }
-  window.TankPartnerAI?.startMatch?.({ stage: stageIndex + 1 });
+  window.TankPartnerAI?.startMatch?.({ stage: stageIndex + 1, run: currentRunContext() });
   loadStage();
   sfx.start();
   updateUi();
@@ -2791,6 +2886,7 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
 function update(dt) {
   if (state !== "playing") return;
   moveFrameId++;
+  resolveAllyOverlap();
   gameTime += dt;
   baseHistoryClock -= dt;
   if (baseHistoryClock <= 0) {
@@ -3191,9 +3287,26 @@ function loop(time) {
   if (state === "playing" && padJustPressed(9)) state = "paused";
   else if (state === "paused" && padJustPressed(9)) state = "playing";
   pressed.clear();
-  updateAccumulator = 0;
-  update(frameDt);
-  draw();
+  if (state === "playing") {
+    const maxSteps = Math.ceil(MAX_FRAME_DT * INTERNAL_TEST_SPEED / FIXED_DT) + 1;
+    updateAccumulator = Math.min(
+      updateAccumulator + frameDt * INTERNAL_TEST_SPEED,
+      FIXED_DT * maxSteps,
+    );
+    let steps = 0;
+    while (updateAccumulator + 1e-9 >= FIXED_DT && steps < maxSteps) {
+      update(FIXED_DT);
+      updateAccumulator -= FIXED_DT;
+      steps++;
+    }
+  } else {
+    updateAccumulator = 0;
+  }
+  const renderInterval = INTERNAL_TEST_SPEED > 1 ? INTERNAL_TEST_RENDER_INTERVAL_MS : NORMAL_RENDER_INTERVAL_MS;
+  if (state !== "playing" || time - lastDrawTime + 0.5 >= renderInterval) {
+    draw();
+    lastDrawTime = time;
+  }
   padPrev = padNow.slice();
   requestAnimationFrame(loop);
 }
@@ -3201,7 +3314,7 @@ function loop(time) {
 function runHiddenStep() {
   if (!document.hidden || state !== "playing") return;
   refreshPad();
-  for (let i = 0; i < 6; i++) update(FIXED_DT);
+  for (let i = 0; i < Math.ceil(6 * INTERNAL_TEST_SPEED); i++) update(FIXED_DT);
   padPrev = padNow.slice();
 }
 

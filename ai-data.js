@@ -9,7 +9,7 @@
   const EVENT_LIMIT = 2400;
   const MATCH_LIMIT = 512;
   const CORE_DATA_VERSION = 2;
-  const ANALYTICS_VERSION = 2;
+  const ANALYTICS_VERSION = 3;
   const ANALYTICS_BUILD_LIMIT = 32;
   const TRACKED_MODE_EVENTS = new Set(["ally_death", "base_hit", "enemy_killed", "enemy_cross_midline"]);
   const MEMORY_SYNC_DELAY = 12000;
@@ -101,8 +101,29 @@
     return result;
   }
 
+  function normalizeRunContext(value = {}) {
+    const speed = Math.max(1, Math.min(8, Number(value?.speed) || 1));
+    return {
+      mode: value?.mode === "TEST" || speed > 1 ? "TEST" : "NORMAL",
+      speed,
+      muted: Boolean(value?.muted),
+    };
+  }
+
+  function runtimeRunContext() {
+    const params = new URLSearchParams(location.search);
+    const speed = /^(localhost|127\.0\.0\.1)$/i.test(location.hostname)
+      ? Math.max(1, Math.min(8, Number(params.get("testSpeed")) || 1))
+      : 1;
+    return normalizeRunContext({
+      mode: speed > 1 ? "TEST" : "NORMAL",
+      speed,
+      muted: params.get("testMute") === "1",
+    });
+  }
+
   function emptyAnalyticsBucket() {
-    return { games: 0, wins: 0, losses: 0, durationTotal: 0, counters: {}, stages: {}, modeCounters: {}, baseHitByEnemy: {} };
+    return { games: 0, wins: 0, losses: 0, durationTotal: 0, counters: {}, stages: {}, modeCounters: {}, baseHitByEnemy: {}, runModes: {} };
   }
 
   function normalizeAnalyticsBucket(value = {}) {
@@ -113,6 +134,9 @@
     bucket.durationTotal = Math.max(0, Number(value.durationTotal) || 0);
     bucket.counters = cleanCounters(value.counters);
     bucket.modeCounters = cleanModeCounters(value.modeCounters);
+    bucket.runModes = Object.fromEntries(Object.entries(value.runModes || {})
+      .filter(([, count]) => Number(count) > 0)
+      .map(([mode, count]) => [String(mode).slice(0, 16), Math.max(0, Math.floor(Number(count) || 0))]));
     bucket.baseHitByEnemy = Object.fromEntries(Object.entries(value.baseHitByEnemy || {})
       .filter(([, count]) => Number(count) > 0)
       .map(([kind, count]) => [String(kind).slice(0, 16), Math.max(0, Math.floor(Number(count) || 0))]));
@@ -135,6 +159,9 @@
     bucket.games++;
     bucket[win ? "wins" : "losses"]++;
     bucket.durationTotal = Math.round((bucket.durationTotal + duration) * 10) / 10;
+    const run = normalizeRunContext(match?.run);
+    const runLabel = run.mode === "TEST" ? `TEST ${run.speed}X` : "NORMAL";
+    bucket.runModes[runLabel] = (bucket.runModes[runLabel] || 0) + 1;
     const stage = bucket.stages[stageKey] || { games: 0, wins: 0, losses: 0, durationTotal: 0 };
     stage.games++;
     stage[win ? "wins" : "losses"]++;
@@ -240,6 +267,7 @@
   function normalizeExperience(value = {}) {
     const matches = Array.isArray(value.matches) ? value.matches.slice(-MATCH_LIMIT).map((match) => ({
       ...match,
+      run: normalizeRunContext(match?.run),
       counters: cleanCounters(match?.counters),
       modeCounters: cleanModeCounters(match?.modeCounters),
     })) : [];
@@ -252,6 +280,7 @@
       analytics: normalizeAnalytics(value.analytics, matches),
       currentMatch: value.currentMatch ? {
         ...value.currentMatch,
+        run: normalizeRunContext(value.currentMatch.run || runtimeRunContext()),
         counters: cleanCounters(value.currentMatch.counters),
         modeCounters: cleanModeCounters(value.currentMatch.modeCounters),
       } : null,
@@ -378,6 +407,7 @@
       counters: {},
       modeCounters: {},
       build: currentBuild(),
+      run: normalizeRunContext(meta.run),
     };
     syncMemoryFile();
   }
@@ -385,7 +415,7 @@
   function recordExperience(type, detail = {}) {
     if (!type) return;
     const match = experience.currentMatch || {
-      id: `${Date.now()}-${experience.games}`, stage: detail.stage || 1, events: 0, counters: {}, modeCounters: {}, build: currentBuild(),
+      id: `${Date.now()}-${experience.games}`, stage: detail.stage || 1, events: 0, counters: {}, modeCounters: {}, build: currentBuild(), run: normalizeRunContext(detail.run),
     };
     match.events++;
     match.counters[type] = (match.counters[type] || 0) + 1;
@@ -399,6 +429,7 @@
     experience.currentMatch = match;
     const event = {
       matchId: match.id,
+      run: normalizeRunContext(match.run),
       stage: detail.stage ?? match.stage,
       time: Math.round((Number(detail.time) || 0) * 10) / 10,
       type,
@@ -486,6 +517,7 @@
         counters: cleanCounters(match.counters),
         modeCounters: cleanModeCounters(match.modeCounters),
         build: match.build || currentBuild(),
+        run: normalizeRunContext(result.run || match.run),
       };
       indexFinishedMatch(summary);
       experience.matches.push(summary);
