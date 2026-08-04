@@ -10,6 +10,8 @@
     "types": ["node"],
     "strict": false,
     "noImplicitAny": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noUncheckedIndexedAccess": false,
     "skipLibCheck": true
   },

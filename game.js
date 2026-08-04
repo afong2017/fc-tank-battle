@@ -14,8 +14,11 @@ const ui = {
   aiEvolution: document.getElementById("aiEvolution"),
   aiWeights: document.getElementById("aiWeights"),
   hotUpgradeStatus: document.getElementById("hotUpgradeStatus"),
-  aiVersionInfo: document.getElementById("aiVersionInfo"),
-  geminiStatus: document.getElementById("geminiStatus"),
+  aiEngineStatus: document.getElementById("aiEngineStatus"),
+  aiModelInfo: document.getElementById("aiModelInfo"),
+  aiBestStage: document.getElementById("aiBestStage"),
+  aiLastLearn: document.getElementById("aiLastLearn"),
+  aiUpdatedInfo: document.getElementById("aiUpdatedInfo"),
   lives: document.getElementById("lives"),
   p1Deaths: document.getElementById("p1Deaths"),
   p2Deaths: document.getElementById("p2Deaths"),
@@ -59,8 +62,23 @@ const LIFE_MIN = 3;
 const LIFE_MAX = 100;
 const FIXED_DT = 1 / 60;
 const MAX_FRAME_DT = 0.033;
-const TRAINING_STATS_KEY = "fc-tank-battle.ai-training-stats.v2";
-const OLD_TRAINING_STATS_KEY = "fc-tank-battle.ai-training-stats.v1";
+const INTERNAL_TEST_PARAMS = new URLSearchParams(location.search);
+const INTERNAL_TEST_SPEED = location.hostname === "127.0.0.1" || location.hostname === "localhost"
+  ? clamp(Number(INTERNAL_TEST_PARAMS.get("testSpeed")) || 1, 1, 8)
+  : 1;
+const INTERNAL_TEST_MUTED = INTERNAL_TEST_PARAMS.get("testMute") === "1";
+const INTERNAL_TEST_RENDER_INTERVAL_MS = 200;
+const NORMAL_RENDER_INTERVAL_MS = 1000 / 60;
+const AI_DECISION_INTERVAL = 1 / 30;
+const SHADOW_TEST_LEASE_KEY = "fc-tank-battle.shadow-test-owner";
+const SHADOW_TEST_LEASE_MS = 6000;
+const SHADOW_TEST_HEARTBEAT_MS = 2000;
+const SHADOW_TEST_MODE = INTERNAL_TEST_SPEED > 1;
+const SHADOW_TEST_OWNER = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+let shadowTestLeaseHeld = !SHADOW_TEST_MODE;
+let shadowTestHeartbeat = null;
+const TRAINING_STATS_KEY = "fc-tank-battle.ai-training-stats";
+const LEGACY_TRAINING_STATS_KEYS = ["fc-tank-battle.ai-training-stats.v2", "fc-tank-battle.ai-training-stats.v1"];
 const TRAINING_AUTO_ARMED_KEY = "fc-tank-battle.training-auto-armed";
 const HOT_UPGRADE_KEY = "fc-tank-battle.hot-upgrade";
 const ENEMY_BAR_SLOTS = 20;
@@ -83,6 +101,7 @@ let menuRepeat = {
   y: { dir: 0, wait: 0 },
 };
 let lastTime = 0;
+let lastDrawTime = 0;
 let updateAccumulator = 0;
 let moveFrameId = 0;
 let state = "title";
@@ -100,7 +119,6 @@ let selectedStageIndex = 0;
 let completedLoops = 0;
 let gameVersion = 1;
 let gameVersionLabel = "CODEX";
-let lastAiVersionText = "";
 let autoUpgradeEnabled = false;
 let aiTrainingEnabled = true;
 let hotUpgradeEnabled = true;
@@ -111,7 +129,14 @@ let lastEnemyMeterSlots = -1;
 let spawnClock = 0;
 let freezeClock = 0;
 let shake = 0;
-let geminiCoachClock = 0;
+
+function currentRunContext() {
+  return {
+    mode: INTERNAL_TEST_SPEED > 1 ? "TEST" : "NORMAL",
+    speed: INTERNAL_TEST_SPEED,
+    muted: INTERNAL_TEST_MUTED,
+  };
+}
 
 const colors = {
   brick: "#b65c35",
@@ -154,8 +179,8 @@ function loadTrainingStats() {
     return { seconds: 0, games: 0 };
   }
   try {
-    localStorage.removeItem(OLD_TRAINING_STATS_KEY);
-    const saved = JSON.parse(localStorage.getItem(TRAINING_STATS_KEY)) || {};
+    const saved = JSON.parse(localStorage.getItem(TRAINING_STATS_KEY) || LEGACY_TRAINING_STATS_KEYS.map((key) => localStorage.getItem(key)).find(Boolean) || "{}") || {};
+    LEGACY_TRAINING_STATS_KEYS.forEach((key) => localStorage.removeItem(key));
     return {
       seconds: Math.max(0, Number(saved.seconds) || 0),
       games: Math.max(0, Math.floor(Number(saved.games) || 0)),
@@ -862,6 +887,8 @@ let allyFireReports = [];
 let particles = [];
 let bonuses = [];
 let baseAlive = true;
+let baseHistory = [];
+let baseHistoryClock = 0;
 const baseRect = { x: 12 * TILE, y: 22 * TILE, w: 2 * TILE, h: 2 * TILE };
 let ai1 = null;
 let ai2 = null;
@@ -869,8 +896,11 @@ let p1Idle = 0;
 let p1Auto = false;
 let p2Human = false;
 let baseDangerClock = 0;
-let lastGeminiAdviceSeen = null;
-let hiddenTimer = null;
+let shadowClockWorker = null;
+let shadowClockRunning = false;
+let shadowClockPendingSteps = 0;
+let shadowClockFallbackTimer = null;
+let lastShadowLeaseRefresh = 0;
 let trainingRestartTimer = null;
 let trainingAutoArmed = sessionStorage.getItem(TRAINING_AUTO_ARMED_KEY) === "1";
 let pendingGameUpgrade = false;
@@ -886,7 +916,7 @@ function newAudio() {
 }
 
 function tone(freq, duration, type = "square", gain = 0.08, slide = 1) {
-  if (!audio) return;
+  if (!audio || INTERNAL_TEST_MUTED) return;
   const osc = audio.createOscillator();
   const amp = audio.createGain();
   const now = audio.currentTime;
@@ -1000,11 +1030,15 @@ function makeTank(kind, x, y) {
     attackRoute: null,
     attackRouteTarget: null,
     attackRouteMode: null,
+    aiActionMode: null,
     lockedBaseTarget: null,
     escapeDir: null,
     escapeTime: 0,
-    snapCooldown: 0,
     turnCooldown: 0,
+    motionDir: "up",
+    motionUntil: 0,
+    motionSpeed: 0,
+    speedClampCount: 0,
     moveFrameId: -1,
     moveFrameDistance: 0,
     midlineRecorded: false,
@@ -1013,6 +1047,85 @@ function makeTank(kind, x, y) {
       return { x: this.x, y: this.y, w: this.w, h: this.h };
     },
   };
+}
+
+function nearestOpenTankPosition(tank, originX, originY) {
+  const candidates = [];
+  const maxRadius = Math.max(COLS, ROWS);
+  for (let radius = 0; radius <= maxRadius; radius++) {
+    for (let dy = -radius; dy <= radius; dy++) {
+      const dx = radius - Math.abs(dy);
+      const offsets = dx === 0 ? [[0, dy]] : [[-dx, dy], [dx, dy]];
+      for (const [offsetX, offsetY] of offsets) {
+        candidates.push({
+          x: originX + offsetX * TILE,
+          y: originY + offsetY * TILE,
+        });
+      }
+    }
+  }
+  return candidates.find((position) => !blocked({
+    x: position.x,
+    y: position.y,
+    w: tank.w,
+    h: tank.h,
+  }, tank)) || null;
+}
+
+function makeTankAtSafeSpawn(kind, x, y) {
+  const tank = makeTank(kind, x, y);
+  const position = nearestOpenTankPosition(tank, x, y);
+  if (position) {
+    tank.x = position.x;
+    tank.y = position.y;
+    tank.lastX = position.x;
+    tank.lastY = position.y;
+  }
+  return tank;
+}
+
+function resolveAllyOverlap() {
+  if (!player?.alive || !player2?.alive || !rects(player.box(), player2.box())) return;
+  const mover = player2;
+  const overlapX = Math.min(player.x + player.w, player2.x + player2.w) - Math.max(player.x, player2.x);
+  const overlapY = Math.min(player.y + player.h, player2.y + player2.h) - Math.max(player.y, player2.y);
+  const horizontalSign = centerOf(player2).x < centerOf(player).x ? -1 : 1;
+  const verticalSign = centerOf(player2).y < centerOf(player).y ? -1 : 1;
+  const corrections = overlapX <= overlapY
+    ? [
+        { x: horizontalSign * (overlapX + 0.5), y: 0 },
+        { x: -horizontalSign * (overlapX + 0.5), y: 0 },
+        { x: 0, y: verticalSign * (overlapY + 0.5) },
+        { x: 0, y: -verticalSign * (overlapY + 0.5) },
+      ]
+    : [
+        { x: 0, y: verticalSign * (overlapY + 0.5) },
+        { x: 0, y: -verticalSign * (overlapY + 0.5) },
+        { x: horizontalSign * (overlapX + 0.5), y: 0 },
+        { x: -horizontalSign * (overlapX + 0.5), y: 0 },
+      ];
+  for (const correction of corrections) {
+    const next = {
+      x: mover.x + correction.x,
+      y: mover.y + correction.y,
+      w: mover.w,
+      h: mover.h,
+    };
+    if (!blocked(next, mover)) {
+      mover.x = next.x;
+      mover.y = next.y;
+      mover.lastX = next.x;
+      mover.lastY = next.y;
+      return;
+    }
+  }
+  const fallback = nearestOpenTankPosition(mover, mover.x, mover.y);
+  if (fallback) {
+    mover.x = fallback.x;
+    mover.y = fallback.y;
+    mover.lastX = fallback.x;
+    mover.lastY = fallback.y;
+  }
 }
 
 function loadStage() {
@@ -1029,8 +1142,10 @@ function loadStage() {
   spawnClock = 0.2;
   freezeClock = 0;
   baseAlive = true;
+  baseHistory = [];
+  baseHistoryClock = 0;
   p1Idle = 0;
-  p1Auto = false;
+  p1Auto = true;
   p2Human = false;
   ai1 = window.TankPartnerAI?.createController("1P");
   ai2 = window.TankPartnerAI?.createController("2P");
@@ -1080,17 +1195,24 @@ function updateUi() {
   if (ui.score2) ui.score2.textContent = String(score2).padStart(6, "0");
   ui.stage.textContent = String(stageIndex + 1).padStart(2, "0");
   if (ui.version) ui.version.textContent = gameVersionLabel;
-  if (ui.aiVersionInfo) {
-    const text = ui.aiVersionInfo.textContent || "";
+  if (ui.aiLastLearn) {
+    const learnEvent = String(window.TankPartnerAI?.readMemory?.()?.lastLearnEvent || "none");
+    const learnEventLabels = {
+      none: "暂无",
+      stuck: "脱困",
+      "base-danger": "老巢遇险",
+      kill: "击毁敌人",
+      "player-death": "1P阵亡",
+      "partner-death": "2P阵亡",
+      "ally-hit": "队友受击",
+      "self-hit": "自身受击",
+      "route-open": "路线打通",
+    };
+    ui.aiLastLearn.textContent = learnEventLabels[learnEvent] || learnEvent.replace(/[-_]+/g, " ").toUpperCase();
+  }
+  if (ui.aiBestStage) {
     const bestStage = Math.max(0, Math.floor(Number(window.TankPartnerAI?.readMemory?.()?.highestStageCleared) || 0));
-    const bestText = `      AI最高通关关卡 ${String(bestStage).padStart(2, "0")}`;
-    const nextText = text.includes("AI最高通关关卡 ")
-      ? text.replace(/\s+AI最高通关关卡 \d+$/, bestText)
-      : `${text}${bestText}`.trim();
-    if (nextText !== lastAiVersionText) {
-      ui.aiVersionInfo.textContent = nextText;
-      lastAiVersionText = nextText;
-    }
+    ui.aiBestStage.textContent = String(bestStage).padStart(2, "0");
   }
   ui.time.textContent = formatTime(gameTime);
   const aiEvolution = aiEvolutionSnapshot();
@@ -1109,14 +1231,44 @@ function updateUi() {
     const scoreText = Number.isFinite(Number(memory.lastScore)) ? ` P${Math.round(Number(memory.lastScore))}` : "";
     ui.aiWeights.innerHTML = `<span class="ai-param">D${formatAiWeight(w.defend)}</span><span class="ai-param">S${formatAiWeight(w.survive)}</span><span class="ai-param">A${formatAiWeight(w.attack)}</span><span class="ai-param">C${formatAiWeight(w.clear)}</span><span>${evoText}</span><span>${geneText}</span><span>${patch}</span><span>${flaw}</span><span>${scoreText.trim()}</span>`;
   }
-  if (ui.geminiStatus) ui.geminiStatus.textContent = `GEMINI ${window.FCGeminiCoach?.statusLabel?.() || "OFF"}`;
   ui.lives.textContent = `${formatLives(lives)}/${formatLives(lives2)}`;
   ui.p1Deaths.textContent = String(p1Deaths).padStart(2, "0");
   ui.p2Deaths.textContent = String(p2Deaths).padStart(2, "0");
   updateEnemyMeter();
   ui.killsTotal.textContent = String(killStats.basic + killStats.fast + killStats.armor).padStart(2, "0");
-  ui.p1mode.textContent = p1Auto ? "AI" : "人工";
-  ui.p2mode.textContent = p2Human ? "人工" : "AI";
+  const coreActive = window.TankPartnerAI?.__engine === "AI-CORE";
+  const aiModeLabel = coreActive ? "AI CORE" : "AI OFF";
+  ui.p1mode.textContent = p1Auto ? aiModeLabel : "人工";
+  ui.p2mode.textContent = p2Human ? "人工" : aiModeLabel;
+  if (ui.aiEngineStatus) {
+    ui.aiEngineStatus.textContent = coreActive ? "CORE ACTIVE" : "AI OFF";
+    ui.aiEngineStatus.classList.toggle("fallback", !coreActive);
+  }
+  canvas.dataset.aiDebug = JSON.stringify({
+    state,
+    time: Math.round(gameTime * 10) / 10,
+    baseAlive,
+    allies: [player, player2].map((tank, index) => tank ? {
+      name: index ? "2P" : "1P",
+      alive: tank.alive,
+      x: Math.round(tank.x),
+      y: Math.round(tank.y),
+      dir: tank.dir,
+      motionSpeed: Math.round((Number(tank.motionSpeed) || 0) * 1000) / 1000,
+      speedClamps: Math.max(0, Math.floor(Number(tank.speedClampCount) || 0)),
+      mode: index ? ai2?.mode : ai1?.mode,
+      target: tank.attackTarget?.alive ? { x: Math.round(tank.attackTarget.x), y: Math.round(tank.attackTarget.y), kind: tank.attackTarget.kind } : null,
+      route: tank.attackRoute?.length || 0,
+    } : null),
+    enemies: enemies.filter((enemy) => enemy.alive).map((enemy) => ({
+      x: Math.round(enemy.x),
+      y: Math.round(enemy.y),
+      dir: enemy.dir,
+      kind: enemy.kind,
+      motionSpeed: Math.round((Number(enemy.motionSpeed) || 0) * 1000) / 1000,
+      speedClamps: Math.max(0, Math.floor(Number(enemy.speedClampCount) || 0)),
+    })),
+  });
 }
 
 function updateStartOverlayText() {
@@ -1306,7 +1458,7 @@ function startGame() {
   gameVersion = 1;
   state = "playing";
   overlay.classList.add("hidden");
-  window.TankPartnerAI?.startMatch?.({ stage: stageIndex + 1 });
+  window.TankPartnerAI?.startMatch?.({ stage: stageIndex + 1, run: currentRunContext() });
   loadStage();
   sfx.start();
 }
@@ -1325,6 +1477,9 @@ function fire(tank, aiControlled = false) {
     dir: tank.dir,
     speed: tank.enemy ? 230 : 310,
     aiControlled,
+    crossedWater: false,
+    waterTiles: 0,
+    lastWaterCell: null,
   };
   bullets.push(bullet);
   if (aiControlled && !tank.enemy) broadcastAllyFire(tank, tank.dir, "fire");
@@ -1357,10 +1512,10 @@ function broadcastAllyFire(tank, dir = tank.dir, phase = "aim") {
 
 function fireToward(tank, dir, aiControlled = false, action = null) {
   if (!DIRS[dir]) return false;
+  const safe = !action || aiShotSafe(tank, action, dir);
+  if (!safe) return false;
   if (!faceTankToward(tank, dir)) return false;
-  const safe = !action || aiShotSafe(tank, action);
-  const fired = safe ? fire(tank, aiControlled) : false;
-  return fired;
+  return fire(tank, aiControlled);
 }
 
 function perpendicularTurnDir(current, desired) {
@@ -1382,7 +1537,15 @@ function faceTankToward(tank, desiredDir) {
 }
 
 function tankSpeedCap(tank) {
-  return Math.min(tank.speed || tank.baseSpeed || 0, tank.maxSpeed || tank.baseSpeed || tank.speed || 0);
+  const kindCap = Number(MAX_TANK_SPEED[tank?.kind]);
+  const baseSpeed = Math.max(0, Number(tank?.baseSpeed) || 0);
+  const currentSpeed = Math.max(0, Number(tank?.speed) || baseSpeed);
+  const objectCap = Math.max(0, Number(tank?.maxSpeed) || baseSpeed || currentSpeed);
+  return Math.min(
+    currentSpeed,
+    objectCap,
+    Number.isFinite(kindCap) ? kindCap : objectCap,
+  );
 }
 
 function clampTankMotion(tank, beforeX, beforeY, dt) {
@@ -1390,31 +1553,43 @@ function clampTankMotion(tank, beforeX, beforeY, dt) {
   const dx = tank.x - beforeX;
   const dy = tank.y - beforeY;
   const moved = Math.hypot(dx, dy);
-  const limit = tankSpeedCap(tank) * Math.max(0, Math.min(dt, 0.033)) + 0.25;
-  if (moved <= limit || moved <= 0.01) return;
+  const frameSeconds = Math.max(0, Math.min(Number(dt) || 0, MAX_FRAME_DT));
+  const limit = tankSpeedCap(tank) * frameSeconds;
+  const motionEpsilon = 1e-6;
+  if (moved <= limit + motionEpsilon || moved <= motionEpsilon) {
+    tank.motionSpeed = frameSeconds > 0 ? moved / frameSeconds : 0;
+    return;
+  }
   const scale = limit / moved;
   const next = { x: beforeX + dx * scale, y: beforeY + dy * scale, w: tank.w, h: tank.h };
   if (!blocked(next, tank)) {
     tank.x = next.x;
     tank.y = next.y;
+    tank.motionSpeed = frameSeconds > 0 ? limit / frameSeconds : 0;
+    tank.speedClampCount = (tank.speedClampCount || 0) + 1;
+    tank.motionDir = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "up" : "down");
+    tank.motionUntil = performance.now() + 90;
     return;
   }
   tank.x = beforeX;
   tank.y = beforeY;
+  tank.motionSpeed = 0;
+  tank.speedClampCount = (tank.speedClampCount || 0) + 1;
 }
 
-function moveTank(tank, dir, dt) {
+function moveTank(tank, dir, dt, moveScale = 1) {
   if (!DIRS[dir]) return false;
-  tank.snapCooldown = Math.max(0, (tank.snapCooldown || 0) - dt);
-  if (!faceTankToward(tank, dir)) return false;
-  const d = DIRS[dir];
+  const facingReady = faceTankToward(tank, dir);
+  const movementDir = facingReady ? dir : tank.dir;
+  const d = DIRS[movementDir];
+  if (!d) return false;
   const speed = tankSpeedCap(tank);
   const budgetDt = Math.max(0, Math.min(dt, 0.033));
   if (tank.moveFrameId !== moveFrameId) {
     tank.moveFrameId = moveFrameId;
     tank.moveFrameDistance = 0;
   }
-  const frameBudget = speed * budgetDt;
+  const frameBudget = speed * budgetDt * clamp(Number(moveScale) || 1, 0.15, 1);
   const remaining = Math.max(0, frameBudget - (tank.moveFrameDistance || 0));
   if (remaining <= 0.01) return false;
   const step = remaining;
@@ -1422,31 +1597,10 @@ function moveTank(tank, dir, dt) {
   if (!blocked(next, tank)) {
     tank.x = next.x;
     tank.y = next.y;
+    tank.motionDir = movementDir;
+    tank.motionUntil = performance.now() + 90;
     tank.moveFrameDistance += step;
     return true;
-  }
-  if (tank.snapCooldown > 0 || dir !== tank.dir) return false;
-  const snap = Math.min(4, step);
-  if (dir === "up" || dir === "down") {
-    const grid = Math.round(tank.x / TILE) * TILE + 2;
-    const aligned = { x: clamp(grid, tank.x - snap, tank.x + snap), y: tank.y, w: tank.w, h: tank.h };
-    const delta = Math.abs(aligned.x - tank.x);
-    if (!blocked(aligned, tank) && delta > 1.2) {
-      tank.x = aligned.x;
-      tank.moveFrameDistance += delta;
-      tank.snapCooldown = 0.16;
-      return true;
-    }
-  } else {
-    const grid = Math.round(tank.y / TILE) * TILE + 2;
-    const aligned = { x: tank.x, y: clamp(grid, tank.y - snap, tank.y + snap), w: tank.w, h: tank.h };
-    const delta = Math.abs(aligned.y - tank.y);
-    if (!blocked(aligned, tank) && delta > 1.2) {
-      tank.y = aligned.y;
-      tank.moveFrameDistance += delta;
-      tank.snapCooldown = 0.16;
-      return true;
-    }
   }
   return false;
 }
@@ -1587,16 +1741,9 @@ function routeLengthOf(tank) {
 }
 
 function recordAiExperience(type, detail = {}) {
-  const advice = window.FCGeminiCoach?.current?.() || null;
-  const tankKind = (detail.tank || detail.ally)?.kind;
-  const coachRole = tankKind === "player" ? advice?.p1Role : tankKind === "player2" ? advice?.p2Role : null;
   window.TankPartnerAI?.recordExperience?.(type, {
     stage: stageIndex + 1,
     time: gameTime,
-    coachRole,
-    coachLane: advice?.focusLane || null,
-    coachRule: advice?.targetRule || null,
-    coachLatencyMs: advice?.latencyMs ?? null,
     ...detail,
   });
 }
@@ -1820,7 +1967,7 @@ function enemyAi(tank, dt) {
     // [改进] 缩短决策间隔
     tank.ai = 0.25 + Math.random() * 0.3;
   }
-  const movedThisFrame = moveTank(tank, desiredDir, dt);
+  moveTank(tank, desiredDir, dt);
   clampTankMotion(tank, beforeX, beforeY, dt);
   if (Math.abs(tank.x - tank.lastX) + Math.abs(tank.y - tank.lastY) > 2) tank.avoidDir = null;
   if (nearBaseZone && enemyFireTowardBase(tank)) return;
@@ -1855,7 +2002,9 @@ function hitTank(tank, bullet) {
         distance: Math.abs(targetCenter.x - killerCenter.x) + Math.abs(targetCenter.y - killerCenter.y),
         angle: bullet.dir,
         clear: Boolean(bullet.aiControlled && killer?.attackRouteMode?.includes("clear")),
-        mode: killer?.attackRouteMode || null,
+        crossWater: Boolean(bullet.crossedWater),
+        waterTiles: Math.max(0, Number(bullet.waterTiles) || 0),
+        mode: killer?.aiActionMode || killer?.attackRouteMode || null,
       });
       const points = tank.kind === "armor" ? 400 : tank.kind === "fast" ? 200 : 100;
       if (bullet.owner?.kind === "player2") score2 += points;
@@ -1872,7 +2021,7 @@ function hitTank(tank, bullet) {
       routeLength: routeLengthOf(tank),
       bulletDir: bullet.dir,
       reason: allyDeathReason(tank, bullet),
-      mode: tank.attackRouteMode || null,
+      mode: tank.aiActionMode || tank.attackRouteMode || null,
     });
     teachAis(tank.kind === "player" ? "ally-hit" : "self-hit", -1);
     if (tank.kind === "player") {
@@ -1880,7 +2029,7 @@ function hitTank(tank, bullet) {
       teachAis("player-death", -0.9);
       if (lives !== Infinity) lives = Math.max(0, lives - 1);
       if (lives === Infinity || lives > 0) {
-        player = makeTank("player", 8 * TILE + 2, 22 * TILE + 2);
+        player = makeTankAtSafeSpawn("player", 8 * TILE + 2, 22 * TILE + 2);
         player.invuln = 2.4;
       } else if (!player2?.alive) {
         endGame(false);
@@ -1890,7 +2039,7 @@ function hitTank(tank, bullet) {
       teachAis("partner-death", -0.9);
       if (lives2 !== Infinity) lives2 = Math.max(0, lives2 - 1);
       if (lives2 === Infinity || lives2 > 0) {
-        player2 = makeTank("player2", 16 * TILE + 2, 22 * TILE + 2);
+        player2 = makeTankAtSafeSpawn("player2", 16 * TILE + 2, 22 * TILE + 2);
         player2.invuln = 2.4;
       } else if (!player?.alive) {
         endGame(false);
@@ -1900,8 +2049,52 @@ function hitTank(tank, bullet) {
   return true;
 }
 
-function damageBase() {
+function compactBaseHistoryTank(tank) {
+  if (!tank?.alive) return null;
+  return {
+    kind: tank.kind,
+    x: Math.round(tank.x),
+    y: Math.round(tank.y),
+    dir: tank.dir,
+    mode: tank.aiActionMode || tank.attackRouteMode || null,
+    target: tank.attackTarget?.alive
+      ? { kind: tank.attackTarget.kind, x: Math.round(tank.attackTarget.x), y: Math.round(tank.attackTarget.y) }
+      : null,
+  };
+}
+
+function captureBaseHistory() {
+  baseHistory.push({
+    time: Math.round(gameTime * 10) / 10,
+    freeze: Math.round(freezeClock * 10) / 10,
+    p1: compactBaseHistoryTank(player),
+    p2: compactBaseHistoryTank(player2),
+    enemies: enemies.filter((enemy) => enemy.alive).map((enemy) => ({
+      kind: enemy.kind,
+      x: Math.round(enemy.x),
+      y: Math.round(enemy.y),
+      dir: enemy.dir,
+      hp: enemy.hp,
+    })),
+    bullets: bullets.filter((bullet) => !bullet.dead).map((bullet) => ({
+      x: Math.round(bullet.x),
+      y: Math.round(bullet.y),
+      dir: bullet.dir,
+      side: bullet.owner?.enemy ? "enemy" : bullet.owner?.kind || "unknown",
+    })),
+  });
+  baseHistory = baseHistory.filter((snapshot) => snapshot.time >= gameTime - 10.2).slice(-21);
+}
+
+function damageBase(bullet = null) {
   if (!baseAlive) return;
+  captureBaseHistory();
+  const owner = bullet?.owner || null;
+  const baseSource = owner?.enemy
+    ? `enemy:${owner.kind}`
+    : owner?.kind === "player" ? "ally:1P"
+      : owner?.kind === "player2" ? "ally:2P"
+        : "unknown";
   const nearestEnemy = enemies
     .filter((enemy) => enemy.alive)
     .sort((a, b) => Math.abs(a.x - baseRect.x) + Math.abs(a.y - baseRect.y) - (Math.abs(b.x - baseRect.x) + Math.abs(b.y - baseRect.y)))[0] || null;
@@ -1909,12 +2102,22 @@ function damageBase() {
     .filter((tank) => tank?.alive)
     .sort((a, b) => Math.abs(a.x - baseRect.x) + Math.abs(a.y - baseRect.y) - (Math.abs(b.x - baseRect.x) + Math.abs(b.y - baseRect.y)))[0] || null;
   recordAiExperience("base_hit", {
-    enemy: nearestEnemy,
+    enemy: owner?.enemy ? owner : nearestEnemy,
+    tank: owner && !owner.enemy ? owner : null,
     ally: nearestAlly,
     target: nearestAlly?.attackTarget,
     routeLength: routeLengthOf(nearestAlly),
     misread: nearestAlly?.attackTarget !== nearestEnemy,
-    mode: nearestAlly?.attackRouteMode || null,
+    mode: nearestAlly?.aiActionMode || nearestAlly?.attackRouteMode || null,
+    reason: baseSource,
+    baseSource,
+    bulletOwner: owner,
+    bulletDir: bullet?.dir || null,
+    impactX: Number.isFinite(bullet?.x) ? Math.round(bullet.x) : null,
+    impactY: Number.isFinite(bullet?.y) ? Math.round(bullet.y) : null,
+    baseTimeline: baseHistory.slice(),
+    historySamples: baseHistory.length,
+    historySeconds: baseHistory.length > 1 ? baseHistory.at(-1).time - baseHistory[0].time : 0,
   });
   baseAlive = false;
   for (let y = 22; y <= 23; y++) {
@@ -1947,7 +2150,7 @@ function aiFirstHit(tank, dir = tank.dir) {
     const tx = Math.floor(x / TILE);
     const ty = Math.floor(y / TILE);
     const t = tileAt(tx, ty);
-    if (t === "S" || t === "B" || t === "E" || t === "W") return { type: "tile", tile: t, x: tx, y: ty, baseGuard: tileInBaseGuard(tx, ty) };
+    if (t === "S" || t === "B" || t === "E") return { type: "tile", tile: t, x: tx, y: ty, baseGuard: tileInBaseGuard(tx, ty) };
   }
   return { type: "none" };
 }
@@ -1967,7 +2170,7 @@ function shotFacesBaseGuard(tank, dir = tank.dir) {
     const ty = Math.floor(y / TILE);
     if (tileInBaseGuard(tx, ty)) return true;
     const t = tileAt(tx, ty);
-    if (t === "S" || t === "W") return false;
+    if (t === "S") return false;
   }
   return false;
 }
@@ -1978,14 +2181,37 @@ function firstHitIsTargetEnemy(tank, dir, target) {
   return hit.type === "enemy" && hit.target === target;
 }
 
-function predictedAllyBoxes(ally) {
-  const box = ally.box();
-  const d = DIRS[ally.dir] || { x: 0, y: 0 };
-  const lead = Math.min(34, (ally.speed || ally.baseSpeed || 90) * 0.28);
-  return [
-    box,
-    { x: box.x + d.x * lead, y: box.y + d.y * lead, w: box.w, h: box.h },
-  ];
+function guaranteedBaseFacingShot(tank, dir, target) {
+  if (!target?.alive || !firstHitIsTargetEnemy(tank, dir, target)) return false;
+  if (allyInShotCorridor(tank, dir)) return false;
+  const targetDir = DIRS[target.dir] || { x: 0, y: 0 };
+  const box = target.box ? target.box() : target;
+  const tankCenterX = tank.x + tank.w / 2;
+  const tankCenterY = tank.y + tank.h / 2;
+  const targetCenterX = box.x + box.w / 2;
+  const targetCenterY = box.y + box.h / 2;
+  const axialDistance = dir === "up" || dir === "down"
+    ? Math.abs(targetCenterY - tankCenterY)
+    : Math.abs(targetCenterX - tankCenterX);
+  const travelTime = freezeClock > 0 ? 0 : Math.min(0.5, axialDistance / 310);
+  const predictedX = targetCenterX + targetDir.x * (target.speed || target.baseSpeed || 90) * travelTime;
+  const predictedY = targetCenterY + targetDir.y * (target.speed || target.baseSpeed || 90) * travelTime;
+  const currentOffset = dir === "up" || dir === "down"
+    ? Math.abs(targetCenterX - tankCenterX)
+    : Math.abs(targetCenterY - tankCenterY);
+  const predictedOffset = dir === "up" || dir === "down"
+    ? Math.abs(predictedX - tankCenterX)
+    : Math.abs(predictedY - tankCenterY);
+  const innerHalfWidth = Math.max(5, (dir === "up" || dir === "down" ? box.w : box.h) / 2 - 5);
+  if (currentOffset > innerHalfWidth || predictedOffset > innerHalfWidth) return false;
+  const perpendicularMotion = dir === "up" || dir === "down" ? targetDir.x !== 0 : targetDir.y !== 0;
+  if (freezeClock <= 0 && travelTime > 0.14) return false;
+  if (freezeClock <= 0 && perpendicularMotion && travelTime > 0.08) return false;
+  const predictedAhead = dir === "up" ? predictedY < tankCenterY
+    : dir === "down" ? predictedY > tankCenterY
+      : dir === "left" ? predictedX < tankCenterX
+        : predictedX > tankCenterX;
+  return predictedAhead;
 }
 
 function allyInShotCorridor(tank, dir = tank.dir) {
@@ -2002,7 +2228,7 @@ function allyInShotCorridor(tank, dir = tank.dir) {
       : { x: x - 6, y: y - 15, w: 12, h: 30 };
     const ally = [player, player2].find((allyTank) => {
       if (!allyTank?.alive || allyTank === tank) return false;
-      return predictedAllyBoxes(allyTank).some((box) => rects(probe, box));
+      return rects(probe, allyTank.box());
     });
     if (ally) return true;
     const enemy = enemies.find((enemyTank) => enemyTank.alive && enemyTank !== tank && rects(probe, enemyTank.box()));
@@ -2010,7 +2236,7 @@ function allyInShotCorridor(tank, dir = tank.dir) {
     const tx = Math.floor(x / TILE);
     const ty = Math.floor(y / TILE);
     const t = tileAt(tx, ty);
-    if (t === "S" || t === "B" || t === "E" || t === "W") return false;
+    if (t === "S" || t === "B" || t === "E") return false;
   }
   return false;
 }
@@ -2042,22 +2268,165 @@ function sweptTargetBox(tank, dir, target) {
   return { x, y, w: right - x, h: bottom - y };
 }
 
+function baseShieldCounterShotSafe(tank, intendedDir) {
+  const d = DIRS[intendedDir];
+  if (!d) return false;
+  const guard = { x: 11 * TILE, y: 21 * TILE, w: 4 * TILE, h: 3 * TILE };
+  const guardCenter = centerOf(guard);
+  const tankCenter = centerOf(tank);
+  return bullets.some((bullet) => {
+    if (!bullet?.enemy || bullet.dead || oppositeDir(bullet.dir) !== intendedDir) return false;
+    const bulletCenter = centerOf(bullet);
+    const vertical = bullet.dir === "up" || bullet.dir === "down";
+    const lateral = vertical
+      ? Math.abs(bulletCenter.x - tankCenter.x)
+      : Math.abs(bulletCenter.y - tankCenter.y);
+    const collisionLane = lateral <= (vertical ? tank.w : tank.h) / 2 + Math.max(bullet.w, bullet.h) / 2 + 7;
+    const ahead = (bulletCenter.x - tankCenter.x) * d.x + (bulletCenter.y - tankCenter.y) * d.y;
+    const inGuardLane = vertical
+      ? bulletCenter.x >= guard.x - 5 && bulletCenter.x <= guard.x + guard.w + 5
+      : bulletCenter.y >= guard.y - 5 && bulletCenter.y <= guard.y + guard.h + 5;
+    const headingToGuard = bullet.dir === "up" ? bulletCenter.y > guardCenter.y
+      : bullet.dir === "down" ? bulletCenter.y < guardCenter.y
+        : bullet.dir === "left" ? bulletCenter.x > guardCenter.x
+          : bulletCenter.x < guardCenter.x;
+    const guardForward = vertical
+      ? Math.abs(guardCenter.y - bulletCenter.y)
+      : Math.abs(guardCenter.x - bulletCenter.x);
+    if (!collisionLane || ahead <= 0 || !inGuardLane || !headingToGuard || ahead + TILE * 0.35 >= guardForward) return false;
+    for (let distance = 8; distance < ahead - 4; distance += 8) {
+      const x = tankCenter.x + d.x * distance;
+      const y = tankCenter.y + d.y * distance;
+      const tile = tileAt(Math.floor(x / TILE), Math.floor(y / TILE));
+      if (tile === "S" || tile === "B" || tile === "E") return false;
+    }
+    return true;
+  });
+}
 
-function aiShotSafe(tank, action = {}) {
-  if (allyInShotCorridor(tank, tank.dir)) return false;
-  const hit = aiFirstHit(tank, tank.dir);
+function counterBulletShotSafe(tank, intendedDir) {
+  const d = DIRS[intendedDir];
+  if (!d) return false;
+  const tankCenter = centerOf(tank);
+  return bullets.some((bullet) => {
+    if (!bullet?.enemy || bullet.dead || oppositeDir(bullet.dir) !== intendedDir) return false;
+    const bulletCenter = centerOf(bullet);
+    const vertical = intendedDir === "up" || intendedDir === "down";
+    const lateral = vertical
+      ? Math.abs(bulletCenter.x - tankCenter.x)
+      : Math.abs(bulletCenter.y - tankCenter.y);
+    const ahead = (bulletCenter.x - tankCenter.x) * d.x + (bulletCenter.y - tankCenter.y) * d.y;
+    if (ahead <= 0 || lateral > ((vertical ? bullet.w : bullet.h) || 6)) return false;
+    for (let distance = 8; distance < ahead - 3; distance += 6) {
+      const x = tankCenter.x + d.x * distance;
+      const y = tankCenter.y + d.y * distance;
+      const tx = Math.floor(x / TILE);
+      const ty = Math.floor(y / TILE);
+      const tile = tileAt(tx, ty);
+      if (tile === "S" || tile === "B" || tile === "E") return false;
+    }
+    return true;
+  });
+}
+
+
+function aiShotSafe(tank, action = {}, intendedDir = tank.dir) {
+  if (allyInShotCorridor(tank, intendedDir)) return false;
+  if (/^core-counter-(?:fire|aim|fire-critical)$/.test(action.mode || "")) {
+    return counterBulletShotSafe(tank, intendedDir);
+  }
+  if (action.mode === "core-base-shield-fire" || action.mode === "core-base-shield-aim") {
+    return baseShieldCounterShotSafe(tank, intendedDir);
+  }
+  const hit = aiFirstHit(tank, intendedDir);
   if (hit.type === "ally") return false;
-  if (shotFacesBaseGuard(tank, tank.dir)) {
-    return firstHitIsTargetEnemy(tank, tank.dir, action.target);
+  if (action.mode === "core-attack-base-emergency-clear") {
+    return false;
+  }
+  if (shotFacesBaseGuard(tank, intendedDir)) {
+    return guaranteedBaseFacingShot(tank, intendedDir, action.target);
   }
   if (action.target?.alive && !action.mode?.includes("clear")) {
-    return (hit.type === "enemy" && hit.target === action.target) || aiCanHitTarget(tank, tank.dir, action.target);
+    if (action.mode === "core-freeze-direct-fire") {
+      return (hit.type === "enemy" && hit.target === action.target) || aiCanHitCurrentTarget(tank, intendedDir, action.target);
+    }
+    if (action.mode === "core-predict-fire") {
+      return (hit.type === "enemy" && hit.target === action.target) || aiCanLikelyHitTarget(tank, intendedDir, action.target);
+    }
+    return (hit.type === "enemy" && hit.target === action.target) || aiCanHitTarget(tank, intendedDir, action.target);
   }
   if (action.mode?.includes("clear")) {
     return hit.type === "tile" && hit.tile === "B" && !hit.baseGuard;
   }
   if (hit.type === "tile" && hit.baseGuard && (hit.tile === "B" || hit.tile === "E")) return false;
   return hit.type === "enemy";
+}
+
+function aiCanHitCurrentTarget(tank, dir, target) {
+  const d = DIRS[dir];
+  if (!d || !target?.alive || allyInShotCorridor(tank, dir)) return false;
+  const tankCenterX = tank.x + tank.w / 2;
+  const tankCenterY = tank.y + tank.h / 2;
+  const targetBox = target.box ? target.box() : target;
+  const targetCenterX = targetBox.x + targetBox.w / 2;
+  const targetCenterY = targetBox.y + targetBox.h / 2;
+  const targetAhead = dir === "up" ? targetCenterY < tankCenterY
+    : dir === "down" ? targetCenterY > tankCenterY
+      : dir === "left" ? targetCenterX < tankCenterX
+        : targetCenterX > tankCenterX;
+  if (!targetAhead) return false;
+  let x = tankCenterX + d.x * 16;
+  let y = tankCenterY + d.y * 16;
+  for (let i = 0; i < 128; i++) {
+    x += d.x * 4;
+    y += d.y * 4;
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return false;
+    const probe = { x: x - 3, y: y - 3, w: 6, h: 6 };
+    if ([player, player2].some((ally) => ally?.alive && ally !== tank && rects(probe, ally.box()))) return false;
+    const firstEnemy = enemies.find((enemy) => enemy?.alive && rects(probe, enemy.box()));
+    if (firstEnemy) return firstEnemy === target;
+    const tx = Math.floor(x / TILE);
+    const ty = Math.floor(y / TILE);
+    const tile = tileAt(tx, ty);
+    if (tileInBaseGuard(tx, ty) && (tile === "B" || tile === "E")) return false;
+    if (tile === "S" || tile === "B" || tile === "E") return false;
+  }
+  return false;
+}
+
+function aiCanLikelyHitTarget(tank, dir, target) {
+  const d = DIRS[dir];
+  if (!d || !target?.alive || allyInShotCorridor(tank, dir)) return false;
+  const tankCenterX = tank.x + tank.w / 2;
+  const tankCenterY = tank.y + tank.h / 2;
+  const swept = sweptTargetBox(tank, dir, target);
+  const futureCenterX = swept.x + swept.w / 2;
+  const futureCenterY = swept.y + swept.h / 2;
+  const targetAhead = dir === "up" ? futureCenterY < tankCenterY
+    : dir === "down" ? futureCenterY > tankCenterY
+      : dir === "left" ? futureCenterX < tankCenterX
+        : futureCenterX > tankCenterX;
+  if (!targetAhead) return false;
+  const lateralGap = dir === "up" || dir === "down"
+    ? Math.max(0, swept.x - tankCenterX, tankCenterX - (swept.x + swept.w))
+    : Math.max(0, swept.y - tankCenterY, tankCenterY - (swept.y + swept.h));
+  if (lateralGap > 10) return false;
+  let x = tankCenterX;
+  let y = tankCenterY;
+  for (let i = 0; i < 40; i++) {
+    x += d.x * TILE * 0.35;
+    y += d.y * TILE * 0.35;
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return false;
+    const probe = { x: x - 6, y: y - 6, w: 12, h: 12 };
+    if (rects(probe, swept)) return true;
+    if ([player, player2].some((ally) => ally?.alive && ally !== tank && rects(probe, ally.box()))) return false;
+    const tx = Math.floor(x / TILE);
+    const ty = Math.floor(y / TILE);
+    const tile = tileAt(tx, ty);
+    if (tileInBaseGuard(tx, ty) && (tile === "B" || tile === "E")) return false;
+    if (tile === "S" || tile === "B" || tile === "E") return false;
+  }
+  return false;
 }
 
 function aiCanHitTarget(tank, dir, target) {
@@ -2069,6 +2438,12 @@ function aiCanHitTarget(tank, dir, target) {
   const directBox = target.box ? target.box() : target;
   const directCenterX = directBox.x + directBox.w / 2;
   const directCenterY = directBox.y + directBox.h / 2;
+  const targetAhead = dir === "up" ? directCenterY < tankCenterY
+    : dir === "down" ? directCenterY > tankCenterY
+      : dir === "left" ? directCenterX < tankCenterX
+        : directCenterX > tankCenterX;
+  if (!targetAhead) return false;
+  const contactRange = Math.abs(directCenterX - tankCenterX) + Math.abs(directCenterY - tankCenterY) <= TILE * 2.2;
   const predictedBox = predictedTargetBox(tank, dir, target);
   const predictedCenterX = predictedBox.x + predictedBox.w / 2;
   const predictedCenterY = predictedBox.y + predictedBox.h / 2;
@@ -2078,9 +2453,9 @@ function aiCanHitTarget(tank, dir, target) {
   const directOffset = dir === "up" || dir === "down"
     ? Math.abs(tankCenterX - directCenterX)
     : Math.abs(tankCenterY - directCenterY);
-  const tolerance = target.speed > 100 ? 14 : 12;
+  const tolerance = contactRange ? 27 : target.speed > 100 ? 20 : 18;
   if (lateralOffset > tolerance && directOffset > tolerance * 0.85) return false;
-  const targetBox = predictedBox;
+  const targetBox = contactRange ? directBox : predictedBox;
   let x = tank.x + tank.w / 2;
   let y = tank.y + tank.h / 2;
   for (let i = 0; i < 34; i++) {
@@ -2093,7 +2468,7 @@ function aiCanHitTarget(tank, dir, target) {
     const ty = Math.floor(y / TILE);
     const t = tileAt(tx, ty);
     if (tileInBaseGuard(tx, ty) && (t === "B" || t === "E")) return false;
-    if (t === "S" || t === "B" || t === "E" || t === "W") return false;
+    if (t === "S" || t === "B" || t === "E") return false;
     if ([player, player2].some((ally) => ally?.alive && ally !== tank && rects(probe, ally.box()))) return false;
   }
   return false;
@@ -2114,8 +2489,27 @@ function oppositeDir(dir) {
 function updateBullets(dt) {
   for (const b of bullets) {
     const d = DIRS[b.dir];
+    const previousX = b.x;
+    const previousY = b.y;
     b.x += d.x * b.speed * dt;
     b.y += d.y * b.speed * dt;
+    const travel = Math.max(Math.abs(b.x - previousX), Math.abs(b.y - previousY));
+    const samples = Math.max(1, Math.ceil(travel / 6));
+    for (let sample = 1; sample <= samples; sample++) {
+      const ratio = sample / samples;
+      const sampleX = previousX + (b.x - previousX) * ratio + b.w / 2;
+      const sampleY = previousY + (b.y - previousY) * ratio + b.h / 2;
+      const tx = Math.floor(sampleX / TILE);
+      const ty = Math.floor(sampleY / TILE);
+      const waterCell = `${tx},${ty}`;
+      if (tileAt(tx, ty) === "W") {
+        b.crossedWater = true;
+        if (b.lastWaterCell !== waterCell) b.waterTiles++;
+        b.lastWaterCell = waterCell;
+      } else {
+        b.lastWaterCell = null;
+      }
+    }
     const box = { x: b.x, y: b.y, w: b.w, h: b.h };
     if (box.x < 0 || box.y < 0 || box.x > canvas.width || box.y > canvas.height) b.dead = true;
     for (const tile of solidTiles(box)) {
@@ -2130,7 +2524,7 @@ function updateBullets(dt) {
         }
         setTile(tile.x, tile.y, ".");
       }
-      if (tile.t === "E") damageBase();
+      if (tile.t === "E") damageBase(b);
       burst(b.x, b.y, tile.t === "S" ? colors.steel : tile.t === "E" ? colors.gold : colors.brick, 8);
       sfx.hit();
       break;
@@ -2199,7 +2593,7 @@ function endGame(win) {
     window.TankPartnerAI?.syncMemoryFileNow?.();
   }
   saveTrainingStats();
-  window.TankPartnerAI?.finishMatch?.({ win, duration: gameTime, stage: stageIndex + 1 });
+  window.TankPartnerAI?.finishMatch?.({ win, duration: gameTime, stage: stageIndex + 1, run: currentRunContext() });
   overlay.classList.remove("hidden");
   ui.overlayTitle.textContent = win ? "STAGE CLEAR" : "GAME OVER";
   ui.overlayPrompt.textContent = aiTrainingEnabled ? "AI TRAIN 自动开始下一局" : "按 Enter / Xbox Start 重新开始";
@@ -2218,7 +2612,7 @@ function nextStage() {
     window.TankPartnerAI?.incrementTrainingGames?.();
     saveTrainingStats();
   }
-  window.TankPartnerAI?.finishMatch?.({ win: true, duration: gameTime, stage: stageIndex + 1 });
+  window.TankPartnerAI?.finishMatch?.({ win: true, duration: gameTime, stage: stageIndex + 1, run: currentRunContext() });
   window.TankPartnerAI?.syncMemoryFileNow?.();
   stageIndex++;
   if (autoUpgradeEnabled) gameVersion++;
@@ -2226,7 +2620,7 @@ function nextStage() {
     stageIndex = 0;
     completedLoops++;
   }
-  window.TankPartnerAI?.startMatch?.({ stage: stageIndex + 1 });
+  window.TankPartnerAI?.startMatch?.({ stage: stageIndex + 1, run: currentRunContext() });
   loadStage();
   sfx.start();
   updateUi();
@@ -2243,7 +2637,6 @@ function aiContext(tank, reservedTargets = [], weights = null) {
     friends: [player, player2].filter((t) => t?.alive && t !== tank),
     reservedTargets,
     weights,
-    coachAdvice: window.FCGeminiCoach?.current?.() || null,
     forcedTarget: visibleEnemyForAlly(tank.lockedBaseTarget) ? tank.lockedBaseTarget : null,
     bullets,
     allyFireReports: allyFireReports.filter((report) => report.owner !== tank && report.ttl > 0),
@@ -2263,7 +2656,16 @@ function aiContext(tank, reservedTargets = [], weights = null) {
       return true;
     },
     canShoot(dir, target) {
+      if (shotFacesBaseGuard(tank, dir)) return guaranteedBaseFacingShot(tank, dir, target);
       return aiCanHitTarget(tank, dir, target);
+    },
+    canPredictShoot(dir, target) {
+      if (shotFacesBaseGuard(tank, dir)) return guaranteedBaseFacingShot(tank, dir, target);
+      return aiCanLikelyHitTarget(tank, dir, target);
+    },
+    canDirectShoot(dir, target) {
+      if (shotFacesBaseGuard(tank, dir)) return guaranteedBaseFacingShot(tank, dir, target);
+      return aiCanHitCurrentTarget(tank, dir, target);
     },
     canMove(dir) {
       const d = DIRS[dir];
@@ -2272,34 +2674,6 @@ function aiContext(tank, reservedTargets = [], weights = null) {
       const next = { x: tank.x + d.x * step, y: tank.y + d.y * step, w: tank.w, h: tank.h };
       return !blocked(next, tank);
     },
-  };
-}
-
-function geminiCoachSnapshot() {
-  const compactTank = (tank) => tank?.alive ? {
-    x: Math.round(centerOf(tank).x / TILE),
-    y: Math.round(centerOf(tank).y / TILE),
-    dir: tank.dir,
-    speed: tank.speed,
-    cooldown: Math.round((tank.cooldown || 0) * 10) / 10,
-  } : null;
-  return {
-    stage: stageIndex + 1,
-    time: Math.round(gameTime * 10) / 10,
-    baseAlive,
-    freezeSeconds: Math.round(freezeClock * 10) / 10,
-    map: map.map((row) => row.join("")).join("/"),
-    allies: { p1: compactTank(player), p2: compactTank(player2) },
-    enemies: enemies.filter((enemy) => enemy.alive).map((enemy) => ({
-      ...compactTank(enemy),
-      kind: enemy.kind,
-      baseDistance: Math.round((Math.abs(enemy.x - baseRect.x) + Math.abs(enemy.y - baseRect.y)) / TILE),
-    })),
-    enemyBullets: bullets.filter((bullet) => bullet.enemy).slice(0, 16).map((bullet) => ({
-      x: Math.round(centerOf(bullet).x / TILE),
-      y: Math.round(centerOf(bullet).y / TILE),
-      dir: bullet.dir,
-    })),
   };
 }
 
@@ -2335,7 +2709,7 @@ function allyCanCrossSide(tank) {
   return !enemies.some((enemy) => visibleEnemyForAlly(enemy) && allyOwnSide(tank, enemy));
 }
 
-function allyEligibleSideTarget(tank, enemy) {
+function allyEligibleSideTarget(enemy) {
   return visibleEnemyForAlly(enemy);
 }
 
@@ -2347,7 +2721,7 @@ function attackTargetFor(tank, reservedTargets = []) {
   const hasLowerEnemy = enemies.some((enemy) => visibleEnemyForAlly(enemy) && centerOf(enemy).y >= midline);
   const canCrossSide = allyCanCrossSide(tank);
   const ranked = enemies
-    .filter((enemy) => allyEligibleSideTarget(tank, enemy))
+    .filter((enemy) => allyEligibleSideTarget(enemy))
     .map((enemy) => {
       const e = centerOf(enemy);
       const t = centerOf(tank);
@@ -2396,11 +2770,10 @@ function isBaseLockThreat(enemy) {
   return lowerApproach || basePocket || firingLane || lowerHalf || movingTowardBase;
 }
 
-function baseLockTargetFor(tank) {
-  if (visibleEnemyForAlly(tank?.lockedBaseTarget) && allyEligibleSideTarget(tank, tank.lockedBaseTarget)) return tank.lockedBaseTarget;
+function baseLockTargetFor(tank, reservedTargets = []) {
   const baseCenter = centerOf(baseRect);
-  return enemies
-    .filter((enemy) => allyEligibleSideTarget(tank, enemy) && isBaseLockThreat(enemy))
+  const ranked = enemies
+    .filter((enemy) => allyEligibleSideTarget(enemy) && isBaseLockThreat(enemy))
     .map((enemy) => {
       const e = centerOf(enemy);
       const tankDistance = tank ? Math.abs(e.x - centerOf(tank).x) + Math.abs(e.y - centerOf(tank).y) : 0;
@@ -2408,9 +2781,19 @@ function baseLockTargetFor(tank) {
       const lane = Math.abs(e.x - baseCenter.x);
       const lowerBonus = e.y > canvas.height * 0.58 ? -280 : 0;
       const laneBonus = lane < TILE * 4 ? -180 : 0;
-      return { enemy, score: baseDistance * 1.45 + lane * 1.45 + tankDistance * 0.28 + lowerBonus + laneBonus };
+      const speed = Math.max(45, enemy.speed || enemy.baseSpeed || 72);
+      const firingDistance = Math.min(
+        Math.abs(e.x - baseCenter.x) + Math.max(0, Math.abs(e.y - baseCenter.y) - TILE * 1.15),
+        Math.abs(e.y - baseCenter.y) + Math.max(0, Math.abs(e.x - baseCenter.x) - TILE * 1.15));
+      const attackEta = firingDistance / speed - (enemy.kind === "fast" ? 0.22 : 0);
+      return { enemy, score: attackEta * 220 + baseDistance * 0.45 + lane * 0.65 + tankDistance * 0.18 + lowerBonus + laneBonus };
     })
-    .sort((a, b) => a.score - b.score)[0]?.enemy || null;
+    .sort((a, b) => a.score - b.score);
+  if (!ranked.length) return null;
+  const reserved = new Set(reservedTargets.filter((target) => target?.alive));
+  const immediate = ranked.find(({ enemy }) => Math.abs(enemy.x - tank.x) + Math.abs(enemy.y - tank.y) <= TILE * 2.2);
+  if (immediate) return immediate.enemy;
+  return ranked.find(({ enemy }) => !reserved.has(enemy))?.enemy || ranked[0].enemy;
 }
 
 function targetReserved(target, reservedTargets) {
@@ -2473,22 +2856,47 @@ function allyUnstuckDir(tank, preferredDir) {
 
 function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedTargets = []) {
   if (!tank?.alive) return;
-  tank.lockedBaseTarget = baseLockTargetFor(tank);
+  tank.lockedBaseTarget = baseLockTargetFor(tank, reservedTargets);
   const beforeX = tank.x;
   const beforeY = tank.y;
   let action = null;
-  if (autoControlled && tank.escapeTime > 0 && tank.escapeDir) {
+  let context = null;
+  const committedThreat = tank.attackTarget?.alive ? tank.attackTarget : tank.lockedBaseTarget;
+  const committedBreakthrough = visibleEnemyForAlly(committedThreat)
+    && centerOf(committedThreat).y >= canvas.height * 0.5;
+  if (committedBreakthrough) {
+    tank.escapeTime = 0;
+    tank.escapeDir = null;
+  }
+  if (autoControlled && !ai && tank.escapeTime > 0 && tank.escapeDir) {
+    tank.aiActionMode = "core-escape";
     moveTank(tank, tank.escapeDir, dt);
     tank.escapeTime = Math.max(0, tank.escapeTime - dt);
   } else if (autoControlled && ai) {
     const effectiveReservedTargets = reservedTargets;
-    const context = aiContext(tank, effectiveReservedTargets, ai.memory?.weights || null);
-    action = ai.decide(context, dt);
-    const actionTarget = action.target?.alive && allyEligibleSideTarget(tank, action.target) ? action.target : null;
-    tank.attackTarget = actionTarget || tank.lockedBaseTarget || attackTargetFor(tank, effectiveReservedTargets);
-    const attackRouteAction = actionTarget?.alive && isAttackRouteMode(action.mode);
-    tank.attackRoute = attackRouteAction ? (context.plannedRoute || null) : null;
-    tank.attackRouteTarget = attackRouteAction ? actionTarget : null;
+    tank.aiDecisionClock = Math.max(0, (Number(tank.aiDecisionClock) || 0) - dt);
+    const cachedTarget = tank.aiCachedAction?.lockedTarget || tank.aiCachedAction?.target;
+    const needsDecision = !tank.aiCachedAction || tank.aiDecisionClock <= 0
+      || (cachedTarget && !cachedTarget.alive);
+    if (needsDecision) {
+      const policy = window.TankPartnerAI?.readPolicy?.(stageIndex + 1, currentRunContext()) || null;
+      context = aiContext(tank, effectiveReservedTargets, policy);
+      action = ai.decide(context, dt);
+      tank.aiCachedAction = action;
+      tank.aiCachedRoute = context.plannedRoute || null;
+      tank.aiDecisionClock = AI_DECISION_INTERVAL;
+    } else {
+      action = tank.aiCachedAction;
+    }
+    tank.aiActionMode = action?.mode || "core-replan";
+    const actionTarget = action.target?.alive && allyEligibleSideTarget(action.target) ? action.target : null;
+    const lockedTarget = action.lockedTarget?.alive && allyEligibleSideTarget(action.lockedTarget)
+      ? action.lockedTarget
+      : actionTarget;
+    tank.attackTarget = lockedTarget;
+    const attackRouteAction = lockedTarget?.alive && isAttackRouteMode(action.mode);
+    tank.attackRoute = attackRouteAction ? (context?.plannedRoute || tank.aiCachedRoute || null) : null;
+    tank.attackRouteTarget = attackRouteAction ? lockedTarget : null;
     tank.attackRouteMode = attackRouteAction ? action.mode : null;
     if (action.fire && actionTarget?.alive && action.mode?.includes("clear")) {
       const toward = dirTowardTarget(tank, actionTarget);
@@ -2499,15 +2907,20 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
     let fired = false;
     if (action.fire) broadcastAllyFire(tank, action.dir || tank.dir, "aim");
     if (action.dir && action.hold) {
-      fired = action.fire ? fireToward(tank, action.dir, true, action) : false;
+      if (action.fire) fired = fireToward(tank, action.dir, true, action);
+      else faceTankToward(tank, action.dir);
     } else if (action.dir) {
-      moveTank(tank, action.dir, dt);
+      moveTank(tank, action.dir, dt, action.moveScale);
     }
     if (!fired && action.fire && !action.hold) {
       const shotDir = action.dir || tank.dir;
       fireToward(tank, shotDir, true, action);
     }
   } else {
+    tank.aiCachedAction = null;
+    tank.aiCachedRoute = null;
+    tank.aiDecisionClock = 0;
+    tank.aiActionMode = null;
     tank.attackTarget = tank.lockedBaseTarget || attackTargetFor(tank, reservedTargets);
     tank.attackRoute = null;
     tank.attackRouteTarget = null;
@@ -2526,20 +2939,25 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
     if (movementWasBlocked) tank.stuck += dt;
     else tank.stuck = Math.max(0, tank.stuck - dt * 2);
     if (tank.stuck > 0.55) {
-      teachAis("stuck", -0.2);
+      ai?.learn("stuck", -0.2);
       recordAiExperience("ally_stuck", {
         tank,
         target: tank.attackTarget,
         routeLength: routeLengthOf(tank),
         staleSeconds: tank.stuck,
         reason: action?.mode?.includes("clear") ? "route_clear_failed" : "target_stale",
-        mode: action?.mode || tank.attackRouteMode || null,
+        mode: action?.mode || tank.aiActionMode || tank.attackRouteMode || null,
       });
       const escapeDir = allyUnstuckDir(tank, action?.dir || tank.dir);
-      if (escapeDir) {
+      const actionBreakthrough = action?.target?.alive
+        && centerOf(action.target).y >= canvas.height * 0.5;
+      if (escapeDir && !actionBreakthrough && !ai) {
         tank.escapeDir = escapeDir;
         tank.escapeTime = 0.62;
         tank.avoidDir = action?.dir || tank.dir;
+      } else {
+        tank.escapeDir = null;
+        tank.escapeTime = 0;
       }
       tank.stuck = 0;
     }
@@ -2552,20 +2970,12 @@ function updateAlly(tank, dt, ai, humanDir, humanFire, autoControlled, reservedT
 function update(dt) {
   if (state !== "playing") return;
   moveFrameId++;
+  resolveAllyOverlap();
   gameTime += dt;
-  geminiCoachClock -= dt;
-  if (geminiCoachClock <= 0) {
-    geminiCoachClock = 0.5;
-    window.FCGeminiCoach?.tick?.(geminiCoachSnapshot());
-  }
-  const geminiAdvice = window.FCGeminiCoach?.current?.() || null;
-  if (geminiAdvice && geminiAdvice !== lastGeminiAdviceSeen) {
-    lastGeminiAdviceSeen = geminiAdvice;
-    recordAiExperience("gemini_advice", {
-      reason: `${geminiAdvice.p1Role}:${geminiAdvice.p2Role}`,
-      mode: `gemini:${geminiAdvice.focusLane}:${geminiAdvice.targetRule}`,
-      coachLatencyMs: geminiAdvice.latencyMs,
-    });
+  baseHistoryClock -= dt;
+  if (baseHistoryClock <= 0) {
+    baseHistoryClock = 0.5;
+    captureBaseHistory();
   }
   allyFireReports.forEach((report) => {
     report.ttl -= dt;
@@ -2600,7 +3010,7 @@ function update(dt) {
   const p2Dir = p2InputDir() || (p2Pad ? padDir : null);
   const p1Fire = KEYS.has("Space") || (p1Pad && padFire);
   const p2Fire = KEYS.has("KeyU") || (p2Pad && padFire);
-  updateAlly(player, dt, ai1, p1Dir, p1Fire, p1Auto);
+  updateAlly(player, dt, ai1, p1Dir, p1Fire, p1Auto, [player2?.attackTarget]);
   updateAlly(player2, dt, ai2, p2Dir, p2Fire, !p2Human, [player?.attackTarget]);
   spawnEnemy(dt);
   baseDangerClock -= dt;
@@ -2623,7 +3033,7 @@ function update(dt) {
       target: nearestAlly?.attackTarget,
       routeLength: routeLengthOf(nearestAlly),
       timelyReturn: Boolean(nearestAlly?.attackTarget === breached || nearestAlly?.lockedBaseTarget === breached),
-      mode: nearestAlly?.attackRouteMode || null,
+      mode: nearestAlly?.aiActionMode || nearestAlly?.attackRouteMode || null,
     });
   }
   freezeClock = Math.max(0, freezeClock - dt);
@@ -2719,15 +3129,26 @@ function drawTank(t) {
   const trim = isPlayer ? "#fff6b8" : isPlayer2 ? "#d9fbff" : t.kind === "fast" ? "#dce8c7" : t.kind === "armor" ? "#c5d0bd" : "#d6e4c3";
   const dark = isPlayer ? "#746325" : isPlayer2 ? "#275b78" : t.kind === "fast" ? "#3f4b3a" : t.kind === "armor" ? "#2f3a2d" : "#34412f";
   const track = t.kind === "armor" ? "#171823" : "#101014";
+  const trackDir = performance.now() < (t.motionUntil || 0) ? t.motionDir : t.dir;
   const bodyInset = t.kind === "armor" ? 4 : t.kind === "fast" ? 7 : 5;
   const bodyWidth = 28 - bodyInset * 2;
   ctx.fillStyle = track;
-  ctx.fillRect(x, y + 2, 7, 24);
-  ctx.fillRect(x + 21, y + 2, 7, 24);
+  if (trackDir === "left" || trackDir === "right") {
+    ctx.fillRect(x + 2, y, 24, 7);
+    ctx.fillRect(x + 2, y + 21, 24, 7);
+  } else {
+    ctx.fillRect(x, y + 2, 7, 24);
+    ctx.fillRect(x + 21, y + 2, 7, 24);
+  }
   ctx.fillStyle = "#3a3a36";
   for (let i = 0; i < 4; i++) {
-    ctx.fillRect(x + 1, y + 4 + i * 5, 5, 2);
-    ctx.fillRect(x + 22, y + 4 + i * 5, 5, 2);
+    if (trackDir === "left" || trackDir === "right") {
+      ctx.fillRect(x + 4 + i * 5, y + 1, 2, 5);
+      ctx.fillRect(x + 4 + i * 5, y + 22, 2, 5);
+    } else {
+      ctx.fillRect(x + 1, y + 4 + i * 5, 5, 2);
+      ctx.fillRect(x + 22, y + 4 + i * 5, 5, 2);
+    }
   }
   ctx.fillStyle = t.color;
   ctx.fillRect(x + bodyInset, y + 4, bodyWidth, 20);
@@ -2786,40 +3207,25 @@ function steelBlocksLineAt(x, y) {
   return tileAt(Math.floor(x / TILE), Math.floor(y / TILE)) === "S";
 }
 
-function lineBlockedBySteel(from, to) {
+function lineBlockedForAttackRoute(from, to) {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const distance = Math.max(Math.abs(dx), Math.abs(dy));
   if (distance < 1) return false;
   for (let step = 4; step <= distance; step += 4) {
     const ratio = Math.min(1, step / distance);
-    if (steelBlocksLineAt(from.x + dx * ratio, from.y + dy * ratio)) return true;
+    const x = from.x + dx * ratio;
+    const y = from.y + dy * ratio;
+    const tx = Math.floor(x / TILE);
+    const ty = Math.floor(y / TILE);
+    const tile = tileAt(tx, ty);
+    if (tile === "S" || (tileInBaseGuard(tx, ty) && (tile === "B" || tile === "E"))) return true;
   }
   return false;
 }
 
-function appendIfSteelClear(points, point) {
-  const from = points[points.length - 1];
-  if (lineBlockedBySteel(from, point)) return false;
-  points.push(point);
-  return true;
-}
-
-function appendTargetConnector(points, targetPoint) {
-  const last = points[points.length - 1];
-  const sameColumn = Math.abs(last.x - targetPoint.x) <= TILE * 0.55;
-  const sameRow = Math.abs(last.y - targetPoint.y) <= TILE * 0.55;
-  if (sameColumn) return appendIfSteelClear(points, { x: last.x, y: targetPoint.y });
-  if (sameRow) return appendIfSteelClear(points, { x: targetPoint.x, y: last.y });
-  const horizontalFirst = Math.abs(last.x - targetPoint.x) > Math.abs(last.y - targetPoint.y);
-  const first = horizontalFirst ? { x: targetPoint.x, y: last.y } : { x: last.x, y: targetPoint.y };
-  const second = { x: targetPoint.x, y: targetPoint.y };
-  if (lineBlockedBySteel(last, first) || lineBlockedBySteel(first, second)) return false;
-  points.push(first, second);
-  return true;
-}
-
 function isAttackRouteMode(mode = "") {
+  if (/^core-(attack|freeze|intercept|melee|aim|engage|chase|evade|clear|contact|opportunity|stuck|close|base|breakthrough|counter|dynamic|formation|hard|middle|path|predictive|rear|route|same|shot|steel|top|upper)/.test(mode || "")) return true;
   return /^(attack|attack-clear|long-range-fire|forward-intercept|forward-intercept-fire|forward-intercept-clear|freeze-assault|freeze-assault-fire|freeze-assault-clear|base-nearest-hunt|base-nearest-hunt-fire|base-nearest-hunt-clear|chase-break|chase-break-fire|chase-break-clear|target-execute|target-execute-fire|target-execute-clear|base-assault|base-assault-clear|base-anchor|base-anchor-fire|base-anchor-clear|close-melee|close-melee-fire|close-melee-duel|close-melee-dodge|close-melee-clear|kill-confirm|kill-confirm-fire|kill-confirm-clear|base-lane-block|base-lane-fire|base-lane-clear|base-intruder|base-intruder-fire|base-intruder-clear|base-intruder-assault|patch-base-lockdown|patch-base-lockdown-fire|patch-base-lockdown-clear)$/.test(mode || "");
 }
 
@@ -2834,17 +3240,21 @@ function drawTargetLink(tank, color, reservedTargets = []) {
   const a = centerOf(tank);
   const b = centerOf(target);
   const points = [{ x: a.x, y: a.y }];
-  for (const point of route.slice(1)) {
-    const prev = points[points.length - 1];
-    if (Math.abs(prev.x - point.x) < 1 && Math.abs(prev.y - point.y) < 1) continue;
-    points.push({ x: point.x, y: point.y });
+  if (route.length > 1) {
+    for (const point of route.slice(1)) {
+      const prev = points[points.length - 1];
+      if (Math.abs(prev.x - point.x) < 1 && Math.abs(prev.y - point.y) < 1) continue;
+      points.push({ x: point.x, y: point.y });
+    }
   }
-  appendTargetConnector(points, b);
-  if (points.length < 2) {
-    const horizontalFirst = Math.abs(b.x - a.x) > Math.abs(b.y - a.y);
-    const corner = horizontalFirst ? { x: b.x, y: a.y } : { x: a.x, y: b.y };
-    if (!lineBlockedBySteel(a, corner) && !lineBlockedBySteel(corner, b)) points.push(corner, b);
-    else if (!lineBlockedBySteel(a, b)) points.push(b);
+  const last = points[points.length - 1];
+  const sameColumn = Math.abs(last.x - b.x) <= TILE * 0.55;
+  const sameRow = Math.abs(last.y - b.y) <= TILE * 0.55;
+  const shotEnd = sameColumn
+    ? { x: last.x, y: b.y }
+    : sameRow ? { x: b.x, y: last.y } : null;
+  if (shotEnd && !lineBlockedForAttackRoute(last, shotEnd)) {
+    points.push(shotEnd);
   }
   if (points.length < 2) return target;
   ctx.save();
@@ -2902,7 +3312,7 @@ function drawFreezeBonus(b) {
 
 function draw() {
   ctx.save();
-  ctx.fillStyle = "#080808";
+  ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (shake > 0) ctx.translate((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
   for (let y = 0; y < ROWS; y++) {
@@ -2961,32 +3371,145 @@ function loop(time) {
   if (state === "playing" && padJustPressed(9)) state = "paused";
   else if (state === "paused" && padJustPressed(9)) state = "playing";
   pressed.clear();
-  updateAccumulator = 0;
-  update(frameDt);
-  draw();
+  if (state === "playing" && shadowTestLeaseHeld) {
+    const maxSteps = Math.ceil(MAX_FRAME_DT * INTERNAL_TEST_SPEED / FIXED_DT) + 1;
+    updateAccumulator = Math.min(
+      updateAccumulator + frameDt * INTERNAL_TEST_SPEED,
+      FIXED_DT * maxSteps,
+    );
+    let steps = 0;
+    while (updateAccumulator + 1e-9 >= FIXED_DT && steps < maxSteps) {
+      update(FIXED_DT);
+      updateAccumulator -= FIXED_DT;
+      steps++;
+    }
+  } else {
+    updateAccumulator = 0;
+  }
+  const renderInterval = SHADOW_TEST_MODE && !shadowTestLeaseHeld
+    ? 1000
+    : INTERNAL_TEST_SPEED > 1 ? INTERNAL_TEST_RENDER_INTERVAL_MS : NORMAL_RENDER_INTERVAL_MS;
+  if (state !== "playing" || time - lastDrawTime + 0.5 >= renderInterval) {
+    draw();
+    lastDrawTime = time;
+  }
   padPrev = padNow.slice();
   requestAnimationFrame(loop);
 }
 
-function runHiddenStep() {
-  if (!document.hidden || state !== "playing") return;
+function applyShadowClockSteps(requestedSteps) {
+  if (!document.hidden || state !== "playing" || !shadowTestLeaseHeld) return;
+  shadowClockPendingSteps += Math.max(0, Math.floor(Number(requestedSteps) || 0));
+  const steps = Math.min(shadowClockPendingSteps, 96);
+  if (!steps) return;
   refreshPad();
-  for (let i = 0; i < 6; i++) update(FIXED_DT);
+  for (let i = 0; i < steps; i++) update(FIXED_DT);
+  shadowClockPendingSteps -= steps;
   padPrev = padNow.slice();
+  if (Date.now() - lastShadowLeaseRefresh >= 1000) {
+    lastShadowLeaseRefresh = Date.now();
+    refreshShadowTestLease();
+  }
+}
+
+function startShadowClockFallback() {
+  if (shadowClockFallbackTimer) return;
+  shadowClockFallbackTimer = setInterval(() => {
+    applyShadowClockSteps(Math.ceil(6 * INTERNAL_TEST_SPEED));
+  }, 100);
+}
+
+function backgroundSimulationEnabled() {
+  return SHADOW_TEST_MODE || aiTrainingEnabled;
+}
+
+function ensureShadowClockWorker() {
+  if (!backgroundSimulationEnabled() || shadowClockWorker) return shadowClockWorker;
+  try {
+    shadowClockWorker = new Worker("ai-worker.js");
+    shadowClockWorker.onmessage = (event) => {
+      if (event.data?.type === "clock-tick") applyShadowClockSteps(event.data.steps);
+      else if (event.data?.type === "clock-error") startShadowClockFallback();
+    };
+    shadowClockWorker.onerror = () => {
+      shadowClockWorker?.terminate();
+      shadowClockWorker = null;
+      shadowClockRunning = false;
+      startShadowClockFallback();
+    };
+  } catch {
+    shadowClockWorker = null;
+    startShadowClockFallback();
+  }
+  return shadowClockWorker;
 }
 
 function syncBackgroundLoop() {
-  if (document.hidden) {
-    if (!hiddenTimer) hiddenTimer = setInterval(runHiddenStep, 100);
-  } else {
-    if (hiddenTimer) {
-      clearInterval(hiddenTimer);
-      hiddenTimer = null;
+  if (document.hidden && backgroundSimulationEnabled() && shadowTestLeaseHeld) {
+    const worker = ensureShadowClockWorker();
+    if (worker && !shadowClockRunning) {
+      shadowClockRunning = true;
+      shadowClockPendingSteps = 0;
+      worker.postMessage({
+        type: "clock-start",
+        payload: { speed: INTERNAL_TEST_SPEED, fixedDt: FIXED_DT, intervalMs: 50 },
+      });
     }
+    return;
+  }
+  if (shadowClockWorker && shadowClockRunning) shadowClockWorker.postMessage({ type: "clock-stop" });
+  shadowClockRunning = false;
+  shadowClockPendingSteps = 0;
+  if (shadowClockFallbackTimer) {
+    clearInterval(shadowClockFallbackTimer);
+    shadowClockFallbackTimer = null;
+  }
+  if (!document.hidden) {
     lastTime = performance.now();
     updateAccumulator = 0;
     draw();
   }
+}
+
+function refreshShadowTestLease() {
+  if (!SHADOW_TEST_MODE) return true;
+  const now = Date.now();
+  let lease = null;
+  try {
+    lease = JSON.parse(localStorage.getItem(SHADOW_TEST_LEASE_KEY) || "null");
+  } catch {
+    lease = null;
+  }
+  if (!lease?.owner || lease.owner === SHADOW_TEST_OWNER || Number(lease.expiresAt) <= now) {
+    try {
+      localStorage.setItem(SHADOW_TEST_LEASE_KEY, JSON.stringify({
+        owner: SHADOW_TEST_OWNER,
+        expiresAt: now + SHADOW_TEST_LEASE_MS,
+      }));
+      lease = JSON.parse(localStorage.getItem(SHADOW_TEST_LEASE_KEY) || "null");
+    } catch {
+      lease = { owner: SHADOW_TEST_OWNER, expiresAt: now + SHADOW_TEST_LEASE_MS };
+    }
+  }
+  const held = lease?.owner === SHADOW_TEST_OWNER && Number(lease.expiresAt) > now;
+  if (held !== shadowTestLeaseHeld) {
+    shadowTestLeaseHeld = held;
+    updateAccumulator = 0;
+    syncBackgroundLoop();
+  }
+  return held;
+}
+
+function releaseShadowTestLease() {
+  if (!SHADOW_TEST_MODE || !shadowTestLeaseHeld) return;
+  try {
+    const lease = JSON.parse(localStorage.getItem(SHADOW_TEST_LEASE_KEY) || "null");
+    if (lease?.owner === SHADOW_TEST_OWNER) localStorage.removeItem(SHADOW_TEST_LEASE_KEY);
+  } catch {
+    // A stale six-second lease is harmless and will be reclaimed automatically.
+  }
+  shadowTestLeaseHeld = false;
+  syncBackgroundLoop();
 }
 
 function titleStartRequested(e) {
@@ -3085,7 +3608,16 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) window.TankPartnerAI?.syncMemoryFileNow?.();
   syncBackgroundLoop();
 });
-window.addEventListener("pagehide", () => window.TankPartnerAI?.syncMemoryFileNow?.());
+window.addEventListener("pagehide", () => {
+  if (state === "playing") {
+    window.TankPartnerAI?.interruptMatch?.({
+      stage: stageIndex + 1,
+      duration: gameTime,
+      run: currentRunContext(),
+    });
+  }
+  window.TankPartnerAI?.syncMemoryFileNow?.();
+});
 
 window.FCGameHotAPI = {
   isHotUpgradeEnabled: () => hotUpgradeEnabled,
@@ -3094,8 +3626,12 @@ window.FCGameHotAPI = {
     updateStartOverlayText();
   },
   reloadAiControllers() {
+    const p1State = ai1?.snapshot?.() || null;
+    const p2State = ai2?.snapshot?.() || null;
     ai1 = window.TankPartnerAI?.createController("1P");
     ai2 = window.TankPartnerAI?.createController("2P");
+    ai1?.restore?.(p1State);
+    ai2?.restore?.(p2State);
     updateUi();
   },
   setHotUpgradeStatus(status) {
@@ -3111,13 +3647,10 @@ window.FCGameHotAPI = {
    * @param {{developer?: string, model?: string, updatedAtBeijing?: string, updatedAt?: string}=} info
    */
   setAiVersionInfo(info = {}) {
-    if (!ui.aiVersionInfo) return;
-    const developer = info?.developer || "CODEX";
-    const model = info?.model || "GPT-5.5";
+    const model = String(info?.model || "gpt-5.6-sol / medium");
     const updatedAt = info?.updatedAtBeijing || info?.updatedAt || "UNKNOWN";
-    const bestStage = Math.max(0, Math.floor(Number(window.TankPartnerAI?.readMemory?.()?.highestStageCleared) || 0));
-    lastAiVersionText = `${developer} / ${model} / AI ${updatedAt}      AI最高通关关卡 ${String(bestStage).padStart(2, "0")}`;
-    ui.aiVersionInfo.textContent = lastAiVersionText;
+    if (ui.aiModelInfo) ui.aiModelInfo.textContent = model;
+    if (ui.aiUpdatedInfo) ui.aiUpdatedInfo.textContent = String(updatedAt).replace(/\s+CST$/i, "");
   },
   /**
    * @param {{developer?: string, version?: string, hash?: string}=} info
@@ -3125,7 +3658,9 @@ window.FCGameHotAPI = {
   setGameVersionInfo(info = {}) {
     const developer = info?.developer || "CODEX";
     const rawVersion = String(info?.version || info?.hash || "").replace(/\D/g, "");
-    const compactVersion = rawVersion.length >= 12 ? rawVersion.slice(4, 12) : rawVersion.slice(0, 8);
+    const compactVersion = rawVersion.length >= 12
+      ? `${rawVersion.slice(4, 8)} ${rawVersion.slice(8, 10)}:${rawVersion.slice(10, 12)}`
+      : rawVersion.slice(0, 8);
     gameVersionLabel = compactVersion ? `${developer} ${compactVersion}` : developer;
     if (ui.version) ui.version.textContent = gameVersionLabel;
   },
@@ -3160,4 +3695,9 @@ async function bootGame() {
   requestAnimationFrame(loop);
 }
 
+refreshShadowTestLease();
+if (SHADOW_TEST_MODE) {
+  shadowTestHeartbeat = setInterval(refreshShadowTestLease, SHADOW_TEST_HEARTBEAT_MS);
+  window.addEventListener("pagehide", releaseShadowTestLease);
+}
 bootGame();

@@ -3,13 +3,14 @@
 (function () {
   const DEFAULT_VERSION = {
     ai: {
-      version: "20260710130402",
-      file: "ai.js",
+      version: "20260713100130",
+      file: "ai-data.js",
+      files: ["ai-core.js", "ai-data.js"],
       developer: "CODEX",
-      model: "GPT-5.5",
-      updatedAtBeijing: "2026-07-10 13:04:02 CST",
+      model: "gpt-5.6-sol / medium",
+      updatedAtBeijing: "2026-07-13 10:01 CST",
     },
-    game: { version: "20260710130402", file: "game.js" },
+    game: { version: "20260713095154", file: "game.js" },
     pollSeconds: 5,
   };
 
@@ -40,14 +41,28 @@
   }
 
   function setAiVersionInfo(version = state.version) {
-    window.FCGameHotAPI?.setAiVersionInfo?.(version?.ai || DEFAULT_VERSION.ai);
+    const info = version?.ai || DEFAULT_VERSION.ai;
+    window.FCGameHotAPI?.setAiVersionInfo?.({
+      ...info,
+      updatedAtBeijing: String(info.updatedAtBeijing || "UNKNOWN")
+        .replace(/(\d{2}:\d{2}):\d{2}(?=\s*(?:CST)?$)/i, "$1"),
+    });
   }
 
   function setGameVersionInfo(version = state.version) {
-    window.FCGameHotAPI?.setGameVersionInfo?.({
+    const info = {
       developer: version?.ai?.developer || DEFAULT_VERSION.ai.developer,
       ...(version?.game || DEFAULT_VERSION.game),
-    });
+    };
+    window.FCGameHotAPI?.setGameVersionInfo?.(info);
+    // Keep the visible label independent from older game.js formatters that
+    // rendered hour and minute as one opaque number during a live upgrade.
+    const digits = String(info.version || "").replace(/\D/g, "");
+    const minuteVersion = digits.length >= 12
+      ? `${digits.slice(4, 8)} ${digits.slice(8, 10)}:${digits.slice(10, 12)}`
+      : digits.slice(0, 8);
+    const label = document.getElementById("version");
+    if (label && minuteVersion) label.textContent = `${info.developer} ${minuteVersion}`;
   }
 
   function renderVersion(version = state.version) {
@@ -105,7 +120,8 @@
   async function applyAiUpgrade(next) {
     setStatus("AI LOAD");
     const previousAI = window.TankPartnerAI;
-    await loadScript(next.ai.file || "ai.js", next.ai.version || next.ai.hash, "fc-hot-ai-next");
+    await loadScript("ai-core.js", next.ai.version || next.ai.hash, "fc-hot-ai-core-next");
+    await loadScript(next.ai.file || "ai-data.js", next.ai.version || next.ai.hash, "fc-hot-ai-next");
     if (!window.TankPartnerAI || window.TankPartnerAI === previousAI) throw new Error("AI upgrade did not initialize");
     await window.TankPartnerAI.ready;
     window.FCGameHotAPI?.reloadAiControllers?.();
@@ -176,7 +192,7 @@
         } else if (!sameVersion(state.version, next, "ai")) {
           await applyAiUpgrade(next);
         }
-        renderVersion(state.pendingGame);
+        renderVersion({ ...state.pendingGame, ai: next.ai });
         setStatus(state.pendingGame ? (window.FCGameHotAPI?.canApplyGameUpgrade?.() === false ? "GAME WAIT" : "GAME NEW") : "READY");
         return;
       }
@@ -205,8 +221,10 @@
       state.version = await readVersion();
       publishVersion(state.version);
       if (!window.TankPartnerAI) {
-        await loadScript(state.version.ai.file || "ai.js", state.version.ai.version || state.version.ai.hash, "fc-hot-ai");
+        await loadScript("ai-core.js", state.version.ai.version || state.version.ai.hash, "fc-hot-ai-core");
+        await loadScript(state.version.ai.file || "ai-data.js", state.version.ai.version || state.version.ai.hash, "fc-hot-ai");
       }
+      await window.TankPartnerAI?.ready;
       if (!window.FCGameHotAPI) {
         await loadScript(state.version.game.file || "game.js", state.version.game.version || state.version.game.hash, "fc-hot-game");
       }
@@ -223,6 +241,7 @@
     state.fallbackBooted = true;
     state.version = { ...DEFAULT_VERSION, offline: true };
     publishVersion(state.version);
+    await loadScript("ai-core.js", Date.now(), "fc-hot-ai-core");
     await loadScript(DEFAULT_VERSION.ai.file, Date.now(), "fc-hot-ai");
     await loadScript(DEFAULT_VERSION.game.file, Date.now(), "fc-hot-game");
     state.booted = true;

@@ -75,9 +75,11 @@
           </div>
         </div>
         <div class="ai-version-panel">
-          <span>AI VERSION</span>
-          <strong id="aiVersionInfo">CODEX / GPT-5.5 / AI 2026-07-10 13:04:02 CST</strong>
-          <span id="geminiStatus">GEMINI CHECK</span>
+          <span>AI ENGINE</span><strong id="aiEngineStatus" class="ai-engine-status">CHECK</strong>
+          <span>MODEL</span><strong id="aiModelInfo">gpt-5.6-sol / medium</strong>
+          <span>BEST STAGE</span><strong id="aiBestStage">00</strong>
+          <span>最近学习</span><strong id="aiLastLearn">暂无</strong>
+          <span>更新时间</span><strong id="aiUpdatedInfo">本地</strong>
         </div>
       </section>
       <aside class="panel">
@@ -136,9 +138,9 @@
         </div>
       </aside>
     </main>
-    <script src="ai.js"></script>
+    <script src="ai-core.js"></script>
+    <script src="ai-data.js"></script>
     <script src="game.js"></script>
-    <script src="gemini-coach.js"></script>
     <script src="hot-upgrade.js"></script>
   </body>
 </html>

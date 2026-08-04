@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "start": "node dev-server.js",
+    "test": "node --test tests/*.test.cjs",
     "typecheck": "tsc --noEmit",
     "check": "tsc --noEmit"
   },

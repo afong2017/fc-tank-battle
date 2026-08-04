@@ -7,3 +7,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+ai-memory.db
+ai-memory.db-shm
+ai-memory.db-wal

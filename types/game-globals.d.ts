@@ -29,6 +29,8 @@ interface Tank extends RectLike {
   escapeDir: Direction | null;
   avoidDir: Direction | null;
   turnCooldown: number;
+  motionDir: Direction;
+  motionUntil: number;
   attackTarget: Tank | null;
   lockedBaseTarget: Tank | null;
   attackRoute: PointLike[] | null;
@@ -64,24 +66,40 @@ interface AiController {
   decide(ctx: unknown, dt?: number): { dir?: Direction; fire?: boolean; hold?: boolean; mode?: string; target?: Tank | null };
   learn(event: string, amount?: number): void;
   snapshot(): unknown;
+  restore?(snapshot: unknown): boolean;
 }
 
 interface TankPartnerAI {
+  __engine?: string;
+  engineVersion?: string;
   createController(name: "1P" | "2P"): AiController;
   readMemory(): Record<string, unknown>;
+  readPolicy(stage?: number, run?: unknown): Partial<Record<"defend" | "survive" | "attack" | "clear", number>>;
   readExperience(): Record<string, unknown>;
   readExperienceDbStats(): Promise<unknown> | unknown;
   readTraining(): { seconds: number; games: number };
   startMatch(meta?: Record<string, unknown>): void;
   recordExperience(type: string, detail?: Record<string, unknown>): void;
   finishMatch(result?: Record<string, unknown>): void;
+  interruptMatch(meta?: Record<string, unknown>): boolean;
   syncMemoryFile(): void;
-  syncMemoryFileNow(): void;
+  syncMemoryFileNow(): void | Promise<void>;
   restoreMemoryFile(): Promise<void>;
   resetMemory(): void;
   addTrainingSeconds(seconds?: number): void;
   incrementTrainingGames(): void;
   flushTraining(): void;
+  createHandoff?(): {
+    memory: Record<string, unknown>;
+    experience: Record<string, unknown>;
+    training: { seconds: number; games: number };
+    pendingEvents: unknown[];
+    pendingMatches: unknown[];
+    ownsCurrentMatch: boolean;
+    sessionId: string;
+    inFlight: Promise<void> | null;
+  };
+  readonly sessionId: string;
   dispose?(): void;
   ready?: Promise<void>;
 }
@@ -105,33 +123,12 @@ interface FCHotUpgrade {
   current(): unknown;
 }
 
-interface GeminiCoachAdvice {
-  p1Role: "intercept" | "hunt" | "survive";
-  p2Role: "intercept" | "hunt" | "survive";
-  focusLane: "left" | "center" | "right" | "none";
-  targetRule: "fastest-base" | "nearest-base" | "nearest-self";
-  urgency: number;
-  ttlSeconds: number;
-  reason: string;
-  model?: string;
-  expiresAt: number;
-  requestedAt?: number;
-  receivedAt?: number;
-  latencyMs?: number;
-}
-
-interface FCGeminiCoach {
-  tick(snapshot: Record<string, unknown>): Promise<void>;
-  current(): GeminiCoachAdvice | null;
-  statusLabel(): string;
-}
-
 interface Window {
   TankPartnerAI?: TankPartnerAI;
+  TankPartnerAIEngine?: { version: string; enhance(api: TankPartnerAI): TankPartnerAI };
   FCGameHotAPI?: FCGameHotAPI;
   FCHotUpgrade?: FCHotUpgrade;
   FCHotUpgradeVersion?: { ai?: Record<string, unknown>; game?: Record<string, unknown> };
-  FCGeminiCoach?: FCGeminiCoach;
   __TankAIDistanceWorkerCache?: Map<string, unknown>;
   webkitAudioContext?: typeof AudioContext;
 }

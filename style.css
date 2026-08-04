@@ -54,7 +54,7 @@ canvas {
   width: 100%;
   aspect-ratio: 13 / 12;
   image-rendering: pixelated;
-  background: #080808;
+  background: #000000;
 }
 
 .overlay {
@@ -121,26 +121,36 @@ canvas {
 }
 
 .ai-version-panel {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto auto auto auto auto auto auto auto minmax(125px, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 5px;
   min-height: 24px;
   padding: 3px 10px 5px;
   border-top: 2px solid #2f3038;
   background: #14141a;
   color: #aaa690;
-  font-size: 11px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  font-size: 10px;
+  overflow: hidden;
 }
 
 .ai-version-panel strong {
-  flex: 0 0 auto;
-  min-width: max-content;
+  min-width: 0;
+  overflow: hidden;
   color: var(--ink);
-  font-size: 13px;
+  font-size: 12px;
   letter-spacing: 0;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ai-version-panel .ai-engine-status {
+  color: #66d26e;
+  font-size: 12px;
+}
+
+.ai-version-panel .ai-engine-status.fallback {
+  color: #f0c85c;
 }
 
 h1 {
@@ -270,8 +280,9 @@ button:focus-visible {
 }
 
 #version {
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.1;
+  white-space: nowrap;
 }
 
 .enemy-bar {
