@@ -112,6 +112,252 @@ test("both allies lock the final enemy", () => {
   assert.equal(a2.lockedTarget, last);
 });
 
+test("base defense ranks credible firing routes before geometric distance", () => {
+  const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
+  assert.match(source, /function baseDefenseProfile\(ctx, enemy\)/);
+  assert.match(source, /const credibleEta = Math\.min\(routeEta, attackEta\)/);
+  assert.match(source, /Number\.isFinite\(credibleEta\) \? credibleEta : geometricEta \+ 2\.5/);
+  assert.match(source, /const defenseTier = direct\?\.target === "base" \? 0/);
+  assert.match(source, /const impactMargin = direct\?\.target === "base" \? 0\.18/);
+  assert.match(source, /const responseDeadline = Math\.max\(0, dangerEta - impactMargin\)/);
+  assert.doesNotMatch(source, /dangerEta - killAllowance/);
+});
+
+test("the fastest reachable ally may cross its side boundary for an urgent defense", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 10, 18, "up");
+  const p2 = tank("player2", 24, 10, "down");
+  const urgent = enemy(13, 14, "fast");
+  urgent.speed = 105;
+  const decoy = enemy(4, 4);
+  const map = openMap();
+  const c1 = context(p1, [p2], [decoy, urgent], map);
+  const a1 = engine.createController("1P").decide(c1);
+  p1.attackTarget = a1.lockedTarget;
+  const c2 = context(p2, [p1], [decoy, urgent], map);
+  c2.gameTime = 1.01;
+  const a2 = engine.createController("2P").decide(c2);
+  assert.equal(a1.lockedTarget, urgent);
+  assert.notEqual(a2.lockedTarget, urgent);
+});
+
+test("the closest responder owns the nearer breakthrough before a farther lane", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 7, 19, "up");
+  const p2 = tank("player2", 17, 19, "up");
+  const nearBreakthrough = enemy(2, 18);
+  const fartherBreakthrough = enemy(2, 14);
+  const map = openMap();
+  const a1 = engine.createController("1P").decide(
+    context(p1, [p2], [nearBreakthrough, fartherBreakthrough], map),
+  );
+  p1.attackTarget = a1.lockedTarget;
+  const c2 = context(p2, [p1], [nearBreakthrough, fartherBreakthrough], map);
+  c2.gameTime = 1.01;
+  const a2 = engine.createController("2P").decide(c2);
+
+  assert.equal(a1.lockedTarget, nearBreakthrough, `1P=${a1.mode} 2P=${a2.mode}`);
+  assert.equal(a2.lockedTarget, fartherBreakthrough, `1P=${a1.mode} 2P=${a2.mode}`);
+});
+
+test("a newly nearer breakthrough replaces an obsolete hard assignment", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 7, 19, "up");
+  const p2 = tank("player2", 17, 19, "up");
+  const firstThreat = enemy(2, 18);
+  const secondThreat = enemy(2, 14);
+  const map = openMap();
+  const controller1 = engine.createController("1P");
+  const controller2 = engine.createController("2P");
+
+  const first1 = controller1.decide(context(p1, [p2], [firstThreat, secondThreat], map));
+  p1.attackTarget = first1.lockedTarget;
+  const initial2 = context(p2, [p1], [firstThreat, secondThreat], map);
+  initial2.gameTime = 1.01;
+  const first2 = controller2.decide(initial2);
+  p2.attackTarget = first2.lockedTarget;
+  assert.equal(first1.lockedTarget, firstThreat);
+  assert.equal(first2.lockedTarget, secondThreat);
+
+  firstThreat.y = 14 * TILE + 2;
+  secondThreat.y = 18 * TILE + 2;
+  const updated1 = context(p1, [p2], [firstThreat, secondThreat], map);
+  updated1.gameTime = 1.5;
+  updated1.mapVersion = 1;
+  const next1 = controller1.decide(updated1);
+  p1.attackTarget = next1.lockedTarget;
+  const updated2 = context(p2, [p1], [firstThreat, secondThreat], map);
+  updated2.gameTime = 1.51;
+  updated2.mapVersion = 1;
+  const next2 = controller2.decide(updated2);
+
+  assert.equal(next1.lockedTarget, secondThreat, `1P=${next1.mode} 2P=${next2.mode}`);
+  assert.equal(next2.lockedTarget, firstThreat, `1P=${next1.mode} 2P=${next2.mode}`);
+});
+
+test("urgent defense assignment uses route response time and can interrupt a weaker commitment", () => {
+  const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
+  assert.match(source, /function defenderResponseEta\(ctx, ally, threat\)/);
+  assert.match(source, /function plannedDefenseKillEta\(ctx, ally, threat\)/);
+  assert.match(source, /movementEta \+ turnTime\(arrivalDir, plan\.shotDir\)/);
+  assert.match(source, /Math\.max\(Math\.max\(0, aimReadyEta\), reloadReadyEta\)/);
+  assert.match(source, /\(hits - 1\) \* fireDelay/);
+  assert.match(source, /Math\.max\(0, responseEta - threat\.responseDeadline\) \* 50000/);
+  assert.match(source, /selected\?\.defenseTier <= 2[\s\S]{0,220}selected\.responseDeadline \+ 0\.5 < committedThreat\.responseDeadline/);
+});
+
+test("global defense planning isolates each ally from the active game callback context", () => {
+  const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
+  assert.match(source, /function planningContextForAlly\(ctx, ally\)/);
+  assert.match(source, /friends: allies\.filter\(\(item\) => item !== ally\)/);
+  assert.match(source, /canDirectShoot: undefined/);
+  assert.match(source, /const directDir = geometricCurrentShot\(ctx, ally, enemy\)/);
+  assert.match(source, /plannedDefenseKillEta\(planningCtx, ally, threat\)/);
+  assert.doesNotMatch(source, /const directDir = currentPositionShot\(ctx, ally, threat\.enemy\)/);
+  assert.match(source, /reliableDefensePlan\(planningContextForAlly\(ctx, ally\), ally, selected\)/);
+});
+
+test("a steel-blocked ally does not steal an urgent assignment from a clear responder", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 10, 20, "up");
+  const p2 = tank("player2", 14, 14, "left");
+  const urgent = enemy(10, 14, "fast");
+  urgent.speed = 105;
+  const decoy = enemy(3, 4);
+  const map = openMap();
+  for (let x = 0; x <= 12; x++) map[18][x] = "S";
+  const c1 = context(p1, [p2], [decoy, urgent], map);
+  const a1 = engine.createController("1P").decide(c1);
+  p1.attackTarget = a1.lockedTarget;
+  const c2 = context(p2, [p1], [decoy, urgent], map);
+  c2.gameTime = 1.01;
+  const a2 = engine.createController("2P").decide(c2);
+  assert.equal(a2.lockedTarget, urgent, `1P=${a1.mode} 2P=${a2.mode}`);
+  assert.notEqual(a1.lockedTarget, urgent, `1P=${a1.mode} 2P=${a2.mode}`);
+});
+
+test("defense assignment includes reload time and every required armor hit", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 12, 4, "down");
+  const p2 = tank("player2", 19, 9, "left");
+  p1.cooldown = 4;
+  p1.fireDelay = 0.42;
+  p2.cooldown = 0;
+  p2.fireDelay = 0.45;
+  const armor = enemy(12, 9, "armor");
+  armor.hp = 4;
+  armor.speed = 58;
+  const decoy = enemy(3, 4);
+  const map = openMap();
+  const c1 = context(p1, [p2], [armor, decoy], map);
+  const a1 = engine.createController("1P").decide(c1);
+  p1.attackTarget = a1.lockedTarget;
+  const c2 = context(p2, [p1], [armor, decoy], map);
+  c2.gameTime = 1.01;
+  const a2 = engine.createController("2P").decide(c2);
+  assert.equal(a2.lockedTarget, armor, `1P=${a1.mode} 2P=${a2.mode}`);
+  assert.notEqual(a1.lockedTarget, armor, `1P=${a1.mode} 2P=${a2.mode}`);
+});
+
+test("closing enemies keep an early intercept plan with a base-side fallback", () => {
+  const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
+  assert.match(source, /function reliableDefensePlan\(ctx, tank, threat\)/);
+  assert.match(source, /globalInterceptPlan\(ctx, tank, enemy\) \|\| buildInterceptPlan\(ctx, tank, enemy\)/);
+  assert.match(source, /defensePlan: "EARLY_INTERCEPT"/);
+  assert.match(source, /defensePlan: "BASE_SIDE_FALLBACK"/);
+  assert.match(source, /const assignedDefensePlan = ctx\.globalDirective\?\.target === target/);
+  assert.doesNotMatch(source, /!closingIn\)\)/);
+});
+
+test("a nearby base intruder enters immediate mobile melee", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 10, 19, "right");
+  const p2 = tank("player2", 20, 8);
+  const intruder = enemy(12, 19);
+  const decoy = enemy(20, 3);
+  const ctx = context(p1, [p2], [intruder, decoy], openMap());
+  ctx.canDirectShoot = (dir, target) => dir === "right" && target === intruder;
+  const action = engine.createController("1P").decide(ctx);
+  assert.equal(action.lockedTarget, intruder);
+  assert.equal(action.mode, "core-terminal-base-melee-fire");
+  assert.equal(action.fire, true);
+  assert.equal(action.hold, false);
+});
+
+test("near-base terminal combat preserves separate ally assignments", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 7, 19, "right");
+  const p2 = tank("player2", 18, 19, "left");
+  const left = enemy(11, 19);
+  const right = enemy(14, 19);
+  const decoy = enemy(2, 3);
+  const map = openMap();
+  const a1 = engine.createController("1P").decide(context(p1, [p2], [left, right, decoy], map));
+  p1.attackTarget = a1.lockedTarget;
+  const second = context(p2, [p1], [left, right, decoy], map);
+  second.gameTime = 1.01;
+  const a2 = engine.createController("2P").decide(second);
+  assert.notEqual(a1.lockedTarget, a2.lockedTarget);
+  assert.deepEqual(new Set([a1.lockedTarget, a2.lockedTarget]), new Set([left, right]));
+});
+
+test("terminal base arbitration only shares a unique immediate base shooter", () => {
+  const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
+  const terminalBody = source.slice(
+    source.indexOf("function terminalBaseDefenseAction"),
+    source.indexOf("function incomingBulletAction"),
+  );
+  assert.match(terminalBody, /const assignedIntruder = candidates\.find/);
+  assert.match(terminalBody, /const sharedTerminal = terminalBaseThreats\.length === 1/);
+  assert.match(terminalBody, /const unclaimedIntruder = candidates\.find/);
+  assert.match(terminalBody, /pointBlankIntruder \|\| sharedTerminal \|\| assignedIntruder \|\| unclaimedIntruder/);
+});
+
+test("terminal base melee stays behind pickup, dodge, and projectile shielding", () => {
+  const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
+  assert.match(source, /function terminalBaseDefenseAction\(ctx, tank, now\)/);
+  assert.match(source, /ctx\.globalThreats \|\| \[\][\s\S]{0,120}item\.defenseTier <= 1/);
+  const pickupIndex = source.indexOf("if (freeze && tileRange(tank, freeze) <= 3)");
+  const bulletIndex = source.indexOf("if (enemyBullet)", pickupIndex);
+  const shieldIndex = source.indexOf("if (baseProjectilePlan)", bulletIndex);
+  const meleeIndex = source.indexOf("terminalBaseDefenseAction(ctx, tank, now)", shieldIndex);
+  assert.ok(pickupIndex >= 0 && pickupIndex < bulletIndex && bulletIndex < shieldIndex && shieldIndex < meleeIndex);
+});
+
+test("base threat paths and firing goals are cached outside the per-frame context", () => {
+  const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
+  assert.match(source, /const baseThreatPathCaches = new WeakMap\(\)/);
+  assert.match(source, /const cacheOwner = ctx\.map \|\| ctx/);
+  assert.match(source, /const pathKey = `\$\{Number\(ctx\.mapVersion \|\| 0\)\}:\$\{enemyCell\.x\},\$\{enemyCell\.y\}:\$\{enemy\.dir\}/);
+  assert.match(source, /ctx\.globalThreats = globalState\.threats/);
+  const terminalBody = source.slice(
+    source.indexOf("function terminalBaseDefenseAction"),
+    source.indexOf("function incomingBulletAction"),
+  );
+  assert.doesNotMatch(terminalBody, /baseDefenseProfile\(/);
+});
+
+test("repeated near-base decisions reuse the shared threat analysis", () => {
+  const engine = loadEngine();
+  const controller = engine.createController("1P");
+  const p1 = tank("player", 10, 19, "right");
+  const p2 = tank("player2", 15, 19, "left");
+  const enemies = Array.from({ length: 8 }, (_, index) => enemy(3 + index * 2, 16 + index % 3, index % 3 === 0 ? "fast" : "basic"));
+  const map = openMap();
+  let firstReads = 0;
+  const first = context(p1, [p2], enemies, map);
+  first.tileAt = (x, y) => { firstReads++; return map[y]?.[x] || "S"; };
+  controller.decide(first);
+
+  let secondReads = 0;
+  const second = context(p1, [p2], enemies, map);
+  second.gameTime = 1.01;
+  second.tileAt = (x, y) => { secondReads++; return map[y]?.[x] || "S"; };
+  controller.decide(second);
+  assert.ok(firstReads > 100);
+  assert.ok(secondReads < firstReads * 0.35, `expected cached reads, got ${secondReads}/${firstReads}`);
+});
+
 test("point-blank enemy temporarily overrides a distant mission", () => {
   const engine = loadEngine();
   const p1 = tank("player", 11, 18);
@@ -127,10 +373,10 @@ test("close combat keeps its committed target when another enemy is only slightl
   const controller = engine.createController("1P");
   const p1 = tank("player", 10, 10, "up");
   const p2 = tank("player2", 20, 20);
-  const committed = enemy(10, 7);
-  committed.y = p1.y - TILE * 2.9;
-  const distractor = enemy(12, 10);
-  distractor.x = p1.x + TILE * 2.6;
+  const committed = enemy(10, 13);
+  committed.y = p1.y + TILE * 2.9;
+  const distractor = enemy(8, 10);
+  distractor.x = p1.x - TILE * 2.6;
   const first = context(p1, [p2], [committed, distractor], openMap());
   first.globalDirective = { target: committed, commitUntil: 2, hardCommit: true };
   assert.equal(controller.decide(first).lockedTarget, committed);
@@ -162,6 +408,25 @@ test("an aligned close fighter advances and fires in the same action", () => {
   ctx.canDirectShoot = (dir, target) => dir === "right" && target === close;
   const action = engine.createController("1P").decide(ctx);
   assert.equal(action.dir, "right");
+  assert.equal(action.fire, true);
+  assert.equal(action.hold, false);
+});
+
+test("a same-direction tail chase fires immediately on a predictive lane", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 10, 14, "up");
+  const p2 = tank("player2", 20, 20);
+  const fleeing = enemy(10, 10, "fast");
+  fleeing.dir = "up";
+  fleeing.x += 12;
+  const ctx = context(p1, [p2], [fleeing], openMap());
+  ctx.canDirectShoot = () => false;
+  ctx.canShoot = () => false;
+  ctx.canPredictShoot = (dir, target) => dir === "up" && target === fleeing;
+  const action = engine.createController("1P").decide(ctx);
+  assert.equal(action.lockedTarget, fleeing);
+  assert.equal(action.mode, "core-same-direction-chase-fire");
+  assert.equal(action.dir, "up");
   assert.equal(action.fire, true);
   assert.equal(action.hold, false);
 });
@@ -360,11 +625,19 @@ test("a newly spawned nearby freeze interrupts pursuit on the next decision", ()
 test("loop recovery replans instead of committing another orbit", () => {
   const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
   assert.doesNotMatch(source, /orbitBreak|core-orbit-break/);
-  assert.match(source, /stableRouteTarget = null;[\s\S]{0,180}interceptPlan = null/);
+  assert.match(source, /if \(!interceptEndpoint\) \{\s*interceptTarget = null;\s*interceptPlan = null/);
   assert.match(source, /const progressCandidates = candidates\.filter[\s\S]{0,120}item\.targetDistance < currentDistance - 0\.5/);
   assert.match(source, /core-route-loop-(?:replan|progress|escape)/);
   assert.doesNotMatch(source, /if \(!moving \|\| action\?\.fire \|\| tacticalInterrupt\)/);
   assert.match(source, /progressCandidates\[0\]\?\.dir \|\| candidates\.find/);
+});
+
+test("loop recovery preserves an assigned intercept endpoint", () => {
+  const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
+  assert.match(source, /const movementGoal = pickupTarget \|\| interceptGoal \|\| activeTarget/);
+  assert.match(source, /const replanned = findPath\(ctx, cellOf\(tank\), \[interceptEndpoint\]\)/);
+  assert.match(source, /interceptPlan = \{ \.\.\.assignedIntercept, path: replanned, createdAt: now \}/);
+  assert.match(source, /mode = "core-intercept-loop-replan"/);
 });
 
 test("version display removes seconds without weakening version comparison", () => {
