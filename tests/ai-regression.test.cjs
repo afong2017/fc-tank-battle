@@ -112,6 +112,68 @@ test("both allies lock the final enemy", () => {
   assert.equal(a2.lockedTarget, last);
 });
 
+test("a concealed final enemy triggers a last-known-position search without revealing its lock", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 10, 20);
+  const p2 = tank("player2", 14, 20);
+  const last = enemy(8, 5);
+  const map = openMap();
+  engine.createController("1P").decide(context(p1, [p2], [last], map));
+
+  last.y = 6 * TILE + 2;
+  map[6][8] = "F";
+  const hiddenContext = context(p2, [p1], [last], map);
+  hiddenContext.gameTime = 1.5;
+  hiddenContext.mapVersion = 1;
+  const searchController = engine.createController("2P");
+  const action = searchController.decide(hiddenContext);
+
+  assert.match(action.mode, /^core-final-search/);
+  assert.equal(action.hold, false);
+  assert.equal(action.lockedTarget, null);
+
+  const deltas = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+  let searchAction = action;
+  let sweptForest = false;
+  const searchTrace = [];
+  for (let step = 0; step < 30 && !sweptForest; step++) {
+    const moveDir = searchAction.moveDir || searchAction.dir;
+    if (!searchAction.hold && deltas[moveDir]) {
+      p2.x += deltas[moveDir][0] * TILE;
+      p2.y += deltas[moveDir][1] * TILE;
+    }
+    const searchContext = context(p2, [p1], [last], map);
+    searchContext.gameTime = 1.6 + step * 0.1;
+    searchContext.mapVersion = 1;
+    searchAction = searchController.decide(searchContext);
+    searchTrace.push(`${Math.round(p2.x / TILE)},${Math.round(p2.y / TILE)}:${searchAction.mode}:${searchAction.dir}`);
+    assert.match(searchAction.mode, /^core-final-search/);
+    assert.equal(searchAction.lockedTarget, null);
+    sweptForest ||= searchAction.mode === "core-final-search-sweep" && searchAction.fire;
+  }
+  assert.equal(sweptForest, true, searchTrace.join(" | "));
+
+  map[6][8] = ".";
+  const revealedContext = context(p2, [p1], [last], map);
+  revealedContext.gameTime = 2;
+  revealedContext.mapVersion = 2;
+  const revealed = searchController.decide(revealedContext);
+  assert.equal(revealed.lockedTarget, last);
+});
+
+test("a fresh controller searches forest when the only living enemy is already concealed", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 7, 19);
+  const p2 = tank("player2", 17, 19);
+  const last = enemy(8, 6);
+  const map = openMap();
+  map[6][8] = "F";
+  const action = engine.createController("1P").decide(context(p1, [p2], [last], map));
+
+  assert.match(action.mode, /^core-final-search/);
+  assert.equal(action.lockedTarget, null);
+});
+
 test("base defense ranks credible firing routes before geometric distance", () => {
   const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
   assert.match(source, /function baseDefenseProfile\(ctx, enemy\)/);

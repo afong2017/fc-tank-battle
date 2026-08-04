@@ -19,6 +19,8 @@
   const baseProjectileInterceptCaches = new WeakMap();
   const breakthroughAssignments = new WeakMap();
   const globalBattleStates = new WeakMap();
+  const enemyLastSightings = new WeakMap();
+  const forestCellCaches = new WeakMap();
   const freezePathCaches = new WeakMap();
   const workerDistanceCache = new Map();
   const workerDistancePending = new Set();
@@ -135,7 +137,36 @@
   }
 
   function allVisibleEnemies(ctx) {
-    return (ctx.enemies || []).filter((enemy) => enemy?.alive && !inForest(ctx, enemy));
+    const visible = (ctx.enemies || []).filter((enemy) => enemy?.alive && !inForest(ctx, enemy));
+    for (const enemy of visible) {
+      enemyLastSightings.set(enemy, {
+        x: Number(enemy.x) || 0,
+        y: Number(enemy.y) || 0,
+        cell: cellOf(enemy),
+        seenAt: Number(ctx.gameTime) || 0,
+      });
+    }
+    return visible;
+  }
+
+  function concealedFinalEnemy(ctx) {
+    const living = (ctx.enemies || []).filter((enemy) => enemy?.alive);
+    return living.length === 1 && inForest(ctx, living[0]) ? living[0] : null;
+  }
+
+  function forestSearchCells(ctx) {
+    const key = ctx.map;
+    const mapVersion = Number(ctx.mapVersion || 0);
+    const cached = key && forestCellCaches.get(key);
+    if (cached?.mapVersion === mapVersion) return cached.cells;
+    const cells = [];
+    for (let y = 0; y < Number(ctx.rows || 24); y++) {
+      for (let x = 0; x < Number(ctx.cols || 26); x++) {
+        if ((ctx.tileAt?.(x, y) ?? ctx.map?.[y]?.[x]) === "F") cells.push({ x, y });
+      }
+    }
+    if (key) forestCellCaches.set(key, { mapVersion, cells });
+    return cells;
   }
 
   function visibleEnemies(ctx) {
@@ -1410,7 +1441,7 @@
     const stage = Number(ctx.stage || 1);
     const livingEnemies = allVisibleEnemies(ctx);
     const assignmentsValid = state && [...state.assignments.entries()].every(([ally, assignment]) => {
-      if (assignment.target && !assignment.target.alive) return false;
+      if (assignment.target && (!assignment.target.alive || inForest(ctx, assignment.target))) return false;
       const ownSideExists = livingEnemies.some((enemy) => onAssignedSide(ctx, ally, enemy));
       const urgentAssist = Number(assignment.threat?.defenseTier) <= 2;
       return !ownSideExists || !assignment.target || onAssignedSide(ctx, ally, assignment.target) || urgentAssist;
@@ -3221,6 +3252,10 @@
     let breakthroughCommitTarget = null;
     let patrolPressureTarget = null;
     let patrolPressureUntil = 0;
+    let finalSearchEnemy = null;
+    let finalSearchWaypoint = null;
+    let finalSearchMapVersion = -1;
+    let finalSearchStep = 0;
     let wasFrozen = false;
     const recordedShieldBullets = new WeakSet();
 
@@ -3620,6 +3655,100 @@
       emergencyAimDir = freshDir;
       emergencyAimUntil = now + turnTime(tank.dir, freshDir) + 0.24;
       return { dir: freshDir, aimOnly: false };
+    }
+
+    function finalEnemySearchAction(ctx, tank, enemy, now) {
+      if (!enemy?.alive || !inForest(ctx, enemy)) return null;
+      const sighting = enemyLastSightings.get(enemy) || null;
+      const sightCell = sighting?.cell || null;
+      const current = cellOf(tank);
+      const mapVersion = Number(ctx.mapVersion || 0);
+      const searchCells = forestSearchCells(ctx).filter((cell) =>
+        (!sightCell || Math.abs(cell.x - sightCell.x) + Math.abs(cell.y - sightCell.y) <= 6)
+          && Number.isFinite(tileCost(ctx, cell.x, cell.y)));
+      if (!searchCells.length && sightCell && Number.isFinite(tileCost(ctx, sightCell.x, sightCell.y))) {
+        searchCells.push({ ...sightCell });
+      }
+      if (!searchCells.length) return null;
+      searchCells.sort((a, b) => {
+        const origin = sightCell || current;
+        return (Math.abs(a.x - origin.x) + Math.abs(a.y - origin.y))
+          - (Math.abs(b.x - origin.x) + Math.abs(b.y - origin.y))
+          || a.y - b.y
+          || a.x - b.x;
+      });
+      const waypointReached = finalSearchWaypoint
+        && current.x === finalSearchWaypoint.x && current.y === finalSearchWaypoint.y;
+      const waypointValid = finalSearchWaypoint && searchCells.some((cell) =>
+        cell.x === finalSearchWaypoint.x && cell.y === finalSearchWaypoint.y);
+      if (finalSearchEnemy !== enemy || finalSearchMapVersion !== mapVersion || !waypointValid || waypointReached) {
+        if (finalSearchEnemy !== enemy || finalSearchMapVersion !== mapVersion) finalSearchStep = 0;
+        const allyOffset = name === "2P" ? Math.floor(searchCells.length / 2) : 0;
+        finalSearchWaypoint = searchCells[(allyOffset + finalSearchStep * 3) % searchCells.length];
+        finalSearchStep++;
+        finalSearchEnemy = enemy;
+        finalSearchMapVersion = mapVersion;
+      }
+      const path = finalSearchWaypoint ? findPath(ctx, current, [finalSearchWaypoint]) : [];
+      const route = routeStep(ctx, tank, path, 1.5, null, false);
+      if (path.length) publishRoute(ctx, tank, path);
+
+      const nearSearchArea = inForest(ctx, tank) || Boolean(sightCell
+        && Math.abs(current.x - sightCell.x) + Math.abs(current.y - sightCell.y) <= 3);
+      const phase = Math.floor(now / 0.35) + (name === "2P" ? 2 : 0);
+      const sweepOrder = DIR_NAMES.map((_, index) => DIR_NAMES[(phase + index) % DIR_NAMES.length]);
+      const startsInForest = (ctx.tileAt?.(current.x, current.y) ?? ctx.map?.[current.y]?.[current.x]) === "F";
+      const sweepDir = nearSearchArea && ctx.canFire?.()
+        ? sweepOrder.find((dir) => {
+          const d = DIRS[dir];
+          const from = center(tank);
+          const allyInLane = (ctx.friends || []).some((ally) => {
+            if (!ally?.alive) return false;
+            const to = center(ally);
+            const axial = (to.x - from.x) * d.x + (to.y - from.y) * d.y;
+            const lateral = Math.abs((to.x - from.x) * -d.y + (to.y - from.y) * d.x);
+            return axial > 0 && axial <= TILE * 7 && lateral < TILE * 0.65;
+          });
+          const sweepProbe = {
+            x: tank.x + d.x * TILE * 5,
+            y: tank.y + d.y * TILE * 5,
+            w: tank.w,
+            h: tank.h,
+          };
+          if (allyInLane || firstShotObstacle(ctx, tank, dir, sweepProbe)) return false;
+          if (startsInForest) return true;
+          for (let distance = 1; distance <= 5; distance++) {
+            const x = current.x + d.x * distance;
+            const y = current.y + d.y * distance;
+            if ((ctx.tileAt?.(x, y) ?? ctx.map?.[y]?.[x]) === "F") return true;
+          }
+          return false;
+        })
+        : null;
+      if (sweepDir) {
+        return {
+          dir: sweepDir,
+          moveDir: route.dir || undefined,
+          fire: true,
+          hold: !route.dir,
+          mode: "core-final-search-sweep",
+          target: null,
+        };
+      }
+      if (route.dir) {
+        return {
+          dir: route.dir,
+          fire: false,
+          hold: false,
+          mode: route.aligning ? "core-final-search-align" : "core-final-search",
+          target: null,
+        };
+      }
+      const explore = DIR_NAMES[(phase + finalSearchStep) % DIR_NAMES.length];
+      if (ctx.canMove?.(explore)) {
+        return { dir: explore, fire: false, hold: false, mode: "core-final-search-explore", target: null };
+      }
+      return { dir: tank.dir, fire: false, hold: true, mode: "core-final-search-replan", target: null };
     }
 
     function shouldSwitchTarget(ctx, tank, next, now) {
@@ -4438,6 +4567,10 @@
         const freezeRemaining = Math.max(0, Number(ctx.freezeTime) || 0);
         if (wasFrozen && freezeRemaining <= 0) resetFreezeCombatState(now);
         wasFrozen = freezeRemaining > 0;
+        const hiddenFinalEnemy = concealedFinalEnemy(ctx);
+        if (hiddenFinalEnemy && (target === hiddenFinalEnemy || missionTarget === hiddenFinalEnemy)) {
+          setTarget(null, now, true, true);
+        }
         const globalState = analyzeGlobalBattle(ctx, now);
         ctx.globalDirective = globalState.assignments.get(tank) || null;
         ctx.globalThreats = globalState.threats;
@@ -4605,6 +4738,15 @@
         if (freezeRemaining <= 0) {
           const terminalDefense = terminalBaseDefenseAction(ctx, tank, now);
           if (terminalDefense) return terminalDefense;
+        }
+        if (hiddenFinalEnemy) {
+          const searchAction = finalEnemySearchAction(ctx, tank, hiddenFinalEnemy, now);
+          if (searchAction) return searchAction;
+        } else {
+          finalSearchEnemy = null;
+          finalSearchWaypoint = null;
+          finalSearchMapVersion = -1;
+          finalSearchStep = 0;
         }
         if ((ctx.freezeTime || 0) <= 0 && pendingFreezeShots.length) {
           pendingFreezeShots = [];
@@ -5331,7 +5473,16 @@
         };
       }
       if (action?.fire && ctx?.tank?.alive && action.dir) {
-        const obstacle = firstShotObstacle(ctx, ctx.tank, action.dir, action.target);
+        const d = DIRS[action.dir];
+        const searchSweepProbe = action.mode === "core-final-search-sweep" && d
+          ? {
+            x: ctx.tank.x + d.x * TILE * 5,
+            y: ctx.tank.y + d.y * TILE * 5,
+            w: ctx.tank.w,
+            h: ctx.tank.h,
+          }
+          : action.target;
+        const obstacle = firstShotObstacle(ctx, ctx.tank, action.dir, searchSweepProbe);
         const hardBlocked = obstacle && (obstacle.tile !== "B" || obstacle.baseGuard);
         if (hardBlocked) {
           const recovery = blockedShotRecovery(ctx, ctx.tank, action.target, action.dir, obstacle);
