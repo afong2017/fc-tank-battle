@@ -66,6 +66,7 @@ interface AiController {
   decide(ctx: unknown, dt?: number): { dir?: Direction; fire?: boolean; hold?: boolean; mode?: string; target?: Tank | null };
   learn(event: string, amount?: number): void;
   snapshot(): unknown;
+  restore?(snapshot: unknown): boolean;
 }
 
 interface TankPartnerAI {
@@ -73,19 +74,32 @@ interface TankPartnerAI {
   engineVersion?: string;
   createController(name: "1P" | "2P"): AiController;
   readMemory(): Record<string, unknown>;
+  readPolicy(stage?: number, run?: unknown): Partial<Record<"defend" | "survive" | "attack" | "clear", number>>;
   readExperience(): Record<string, unknown>;
   readExperienceDbStats(): Promise<unknown> | unknown;
   readTraining(): { seconds: number; games: number };
   startMatch(meta?: Record<string, unknown>): void;
   recordExperience(type: string, detail?: Record<string, unknown>): void;
   finishMatch(result?: Record<string, unknown>): void;
+  interruptMatch(meta?: Record<string, unknown>): boolean;
   syncMemoryFile(): void;
-  syncMemoryFileNow(): void;
+  syncMemoryFileNow(): void | Promise<void>;
   restoreMemoryFile(): Promise<void>;
   resetMemory(): void;
   addTrainingSeconds(seconds?: number): void;
   incrementTrainingGames(): void;
   flushTraining(): void;
+  createHandoff?(): {
+    memory: Record<string, unknown>;
+    experience: Record<string, unknown>;
+    training: { seconds: number; games: number };
+    pendingEvents: unknown[];
+    pendingMatches: unknown[];
+    ownsCurrentMatch: boolean;
+    sessionId: string;
+    inFlight: Promise<void> | null;
+  };
+  readonly sessionId: string;
   dispose?(): void;
   ready?: Promise<void>;
 }

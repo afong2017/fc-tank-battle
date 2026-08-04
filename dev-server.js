@@ -32,7 +32,6 @@ const AI_META = {
 };
 const GAME_FILES = ["game.js", "index.html", "style.css", "hot-upgrade.js", "ai-worker.js"];
 const AI_FILES = ["ai-core.js", "ai-data.js"];
-const AI_MEMORY_FILE = path.join(ROOT, "ai-memory.json");
 const AI_DATABASE_FILE = path.join(ROOT, "ai-memory.db");
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -47,7 +46,8 @@ function safePath(urlPath) {
   const decoded = decodeURIComponent(urlPath.split("?")[0]);
   const clean = decoded === "/" ? "/index.html" : decoded;
   const target = path.normalize(path.join(ROOT, clean));
-  return target.startsWith(ROOT) ? target : null;
+  const relative = path.relative(ROOT, target);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? target : null;
 }
 
 function fileInfo(name) {
@@ -68,7 +68,9 @@ function fileInfo(name) {
     version: updatedAtBeijing.replace(/\D/g, ""),
     file: name,
     hash: crypto.createHash("sha1").update(content).digest("hex"),
-    updatedAtBeijing: updatedAtBeijing.replace(/:\d{2}$/, "") + " CST",
+    // Keep seconds in the transport payload. The client owns display precision
+    // and removes only the final seconds field, preserving HH:MM.
+    updatedAtBeijing: updatedAtBeijing + " CST",
   };
 }
 
@@ -115,7 +117,15 @@ function readJsonBody(req) {
   });
 }
 
-const aiDatabase = new AiDatabase(AI_DATABASE_FILE, AI_MEMORY_FILE);
+const aiDatabase = new AiDatabase(AI_DATABASE_FILE);
+let analyticsCache = { updatedAt: null, value: null };
+
+function readCachedAnalytics() {
+  const updatedAt = aiDatabase.getMeta("updated_at");
+  if (analyticsCache.value && analyticsCache.updatedAt === updatedAt) return analyticsCache.value;
+  analyticsCache = { updatedAt, value: aiDatabase.readAnalytics() };
+  return analyticsCache.value;
+}
 
 function sanitizeAiData(data) {
   if (!data?.experience) return data;
@@ -195,8 +205,9 @@ const server = http.createServer(async (req, res) => {
           });
           res.end(JSON.stringify({
             updatedAt: aiDatabase.getMeta("updated_at"),
-            analytics: aiDatabase.readAnalytics(),
-            currentMatch: aiDatabase.getState("experience_meta", {})?.currentMatch || null,
+            analytics: readCachedAnalytics(),
+            currentMatch: null,
+            activeMatches: aiDatabase.activeMatches(),
           }));
           return;
         }
@@ -226,6 +237,15 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === "POST") {
         const data = await readJsonBody(req);
+        if (pathname === "/ai-memory/interrupt") {
+          const saved = aiDatabase.interruptMatch(data);
+          res.writeHead(saved.saved ? 200 : 400, {
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+          res.end(JSON.stringify({ ok: saved.saved, ...saved }));
+          return;
+        }
         if (pathname === "/ai-memory/training" && !data?.training) {
           res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: false, error: "training is required" }));
@@ -236,7 +256,7 @@ const server = http.createServer(async (req, res) => {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
         });
-        res.end(JSON.stringify({ ok: true, updatedAt: saved.updatedAt }));
+        res.end(JSON.stringify({ ok: true, updatedAt: saved.updatedAt, canonicalGames: saved.canonicalGames }));
         return;
       }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
@@ -254,6 +274,9 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, {
       "Content-Type": TYPES[path.extname(target).toLowerCase()] || "application/octet-stream",
       "Cache-Control": "no-store",
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Resource-Policy": "same-origin",
     });
     fs.createReadStream(target).pipe(res);
   } catch (error) {

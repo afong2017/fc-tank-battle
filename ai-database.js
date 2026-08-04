@@ -4,9 +4,9 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { DatabaseSync } = require("node:sqlite");
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 4;
 const EVENT_LIMIT = 200000;
-const MATCH_LIMIT = 20000;
+const MATCH_LIMIT = 100000;
 const RUNTIME_EVENT_LIMIT = 2400;
 const RUNTIME_MATCH_LIMIT = 512;
 
@@ -38,13 +38,12 @@ function addCount(target, key, value) {
 }
 
 class AiDatabase {
-  constructor(file, legacyFile) {
+  constructor(file) {
     this.file = file;
-    this.legacyFile = legacyFile;
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;");
     this.createSchema();
-    this.migrateLegacy();
+    this.initializeCanonicalGames();
   }
 
   createSchema() {
@@ -87,6 +86,18 @@ class AiDatabase {
         created_at INTEGER NOT NULL,
         data_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS active_matches (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        stage INTEGER NOT NULL,
+        started_at INTEGER NOT NULL,
+        last_active_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        run_mode TEXT NOT NULL DEFAULT 'NORMAL',
+        test_speed REAL NOT NULL DEFAULT 1,
+        test_muted INTEGER NOT NULL DEFAULT 0,
+        data_json TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_matches_ended ON matches(ended_at);
       CREATE INDEX IF NOT EXISTS idx_matches_build ON matches(build_version, ended_at);
       CREATE INDEX IF NOT EXISTS idx_matches_stage_result ON matches(stage, result);
@@ -94,12 +105,38 @@ class AiDatabase {
       CREATE INDEX IF NOT EXISTS idx_events_match ON events(match_id);
       CREATE INDEX IF NOT EXISTS idx_events_type_kind ON events(type, enemy_kind, created_at);
       CREATE INDEX IF NOT EXISTS idx_events_type_mode ON events(type, mode, created_at);
+      CREATE INDEX IF NOT EXISTS idx_active_matches_status ON active_matches(status, last_active_at);
+      CREATE INDEX IF NOT EXISTS idx_active_matches_run ON active_matches(run_mode, test_speed, last_active_at);
     `);
     const matchColumns = new Set(this.db.prepare("PRAGMA table_info(matches)").all().map((column) => column.name));
     if (!matchColumns.has("run_mode")) this.db.exec("ALTER TABLE matches ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'NORMAL'");
     if (!matchColumns.has("test_speed")) this.db.exec("ALTER TABLE matches ADD COLUMN test_speed REAL NOT NULL DEFAULT 1");
     if (!matchColumns.has("test_muted")) this.db.exec("ALTER TABLE matches ADD COLUMN test_muted INTEGER NOT NULL DEFAULT 0");
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_matches_run_mode ON matches(run_mode, ended_at)");
+    this.db.exec(`
+      INSERT OR IGNORE INTO active_matches(
+        id, session_id, stage, started_at, last_active_at, status,
+        run_mode, test_speed, test_muted, data_json
+      )
+      SELECT e.match_id, 'legacy-' || e.match_id, MIN(e.stage), MIN(e.created_at), MAX(e.created_at),
+        'interrupted',
+        CASE WHEN MAX(COALESCE(json_extract(e.data_json, '$.run.speed'), 1)) > 1 THEN 'TEST' ELSE 'NORMAL' END,
+        MAX(COALESCE(json_extract(e.data_json, '$.run.speed'), 1)),
+        MAX(CASE WHEN COALESCE(json_extract(e.data_json, '$.run.muted'), 0) THEN 1 ELSE 0 END),
+        json_object(
+          'id', e.match_id,
+          'sessionId', 'legacy-' || e.match_id,
+          'stage', MIN(e.stage),
+          'startedAt', MIN(e.created_at),
+          'lastActiveAt', MAX(e.created_at),
+          'events', COUNT(*),
+          'status', 'interrupted',
+          'recoveredFromEvents', json('true')
+        )
+      FROM events e LEFT JOIN matches m ON m.id = e.match_id
+      WHERE m.id IS NULL
+      GROUP BY e.match_id
+    `);
     this.setMeta("schema_version", String(SCHEMA_VERSION));
   }
 
@@ -118,19 +155,110 @@ class AiDatabase {
     `).run(key, json(value), now);
   }
 
+  initializeCanonicalGames() {
+    if (this.getMeta("canonical_games") !== null) {
+      this.syncCanonicalGameStates();
+      return;
+    }
+    const training = this.getState("training", {});
+    const memory = this.getState("memory", {});
+    const experience = this.getState("experience_meta", {});
+    const storedMatches = Number(this.db.prepare("SELECT COUNT(*) count FROM matches").get().count) || 0;
+    // TRAIN GAMES was the only legacy counter incremented strictly at match end.
+    const legacyCompleted = Math.max(0, Math.floor(Number(training.games) || 0));
+    const fallback = Math.max(storedMatches, Math.floor(Number(memory.games) || 0), Math.floor(Number(experience.games) || 0));
+    this.setMeta("canonical_games", String(legacyCompleted || fallback));
+    this.syncCanonicalGameStates();
+  }
+
+  canonicalGames() {
+    return Math.max(0, Math.floor(Number(this.getMeta("canonical_games")) || 0));
+  }
+
+  syncCanonicalGameStates(now = Date.now()) {
+    const games = this.canonicalGames();
+    const training = this.getState("training", {});
+    const memory = this.getState("memory", {});
+    const experience = this.getState("experience_meta", { version: 3, counters: {}, currentMatch: null });
+    this.setState("training", { ...training, games }, now);
+    this.setState("memory", { ...memory, games }, now);
+    this.setState("experience_meta", { ...experience, games, currentMatch: null }, now);
+    return games;
+  }
+
+  upsertActiveMatch(match, sessionId = "unknown", status = "active") {
+    if (!match?.id) return;
+    const run = match.run || {};
+    const speed = Math.max(1, Math.min(8, Number(run.speed) || 1));
+    const runMode = run.mode === "TEST" || speed > 1 ? "TEST" : "NORMAL";
+    const lastActiveAt = Math.max(0, Number(match.lastActiveAt) || Date.now());
+    const stored = {
+      ...match,
+      sessionId: String(match.sessionId || sessionId || "unknown"),
+      status: String(status || match.status || "active"),
+      lastActiveAt,
+    };
+    this.db.prepare(`
+      INSERT INTO active_matches(
+        id, session_id, stage, started_at, last_active_at, status,
+        run_mode, test_speed, test_muted, data_json
+      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        session_id=excluded.session_id, stage=excluded.stage,
+        started_at=excluded.started_at, last_active_at=excluded.last_active_at,
+        status=excluded.status, run_mode=excluded.run_mode,
+        test_speed=excluded.test_speed, test_muted=excluded.test_muted,
+        data_json=excluded.data_json
+    `).run(
+      String(match.id), stored.sessionId, Math.max(1, Number(match.stage) || 1),
+      Math.max(0, Number(match.startedAt) || lastActiveAt), lastActiveAt,
+      stored.status, runMode, speed, run.muted ? 1 : 0, json(stored, {}),
+    );
+  }
+
+  interruptMatch(payload = {}) {
+    const match = payload.match || payload.currentMatch || null;
+    if (!match?.id) return { saved: false };
+    const interruptedAt = Math.max(0, Number(payload.interruptedAt) || Date.now());
+    this.upsertActiveMatch({
+      ...match,
+      stage: Math.max(1, Number(payload.stage) || Number(match.stage) || 1),
+      duration: Math.max(0, Number(payload.duration) || Number(match.duration) || 0),
+      interruptedAt,
+      lastActiveAt: interruptedAt,
+    }, payload.sessionId || match.sessionId, "interrupted");
+    this.setMeta("updated_at", new Date(interruptedAt).toISOString());
+    return { saved: true, id: String(match.id), interruptedAt };
+  }
+
+  activeMatches(limit = 64) {
+    return this.db.prepare(`
+      SELECT id, session_id, stage, started_at, last_active_at, status,
+        run_mode, test_speed, test_muted, data_json
+      FROM active_matches ORDER BY last_active_at DESC LIMIT ?
+    `).all(Math.max(1, Math.min(512, Number(limit) || 64))).map((row) => ({
+      ...parse(row.data_json, {}),
+      id: row.id,
+      sessionId: row.session_id,
+      stage: Number(row.stage) || 1,
+      startedAt: Number(row.started_at) || 0,
+      lastActiveAt: Number(row.last_active_at) || 0,
+      status: row.status,
+      run: {
+        mode: row.run_mode || "NORMAL",
+        speed: Math.max(1, Number(row.test_speed) || 1),
+        muted: Boolean(row.test_muted),
+      },
+    }));
+  }
+
   getState(key, fallback = null) {
     return parse(this.db.prepare("SELECT value_json FROM state WHERE key = ?").get(key)?.value_json, fallback);
   }
 
-  migrateLegacy() {
-    if (this.getMeta("legacy_imported") || !fs.existsSync(this.legacyFile)) return;
-    const data = parse(fs.readFileSync(this.legacyFile, "utf8").replace(/^\uFEFF/, ""), null);
-    if (data) this.write(data);
-    this.setMeta("legacy_imported", new Date().toISOString());
-  }
-
   insertMatch(match) {
-    if (!match?.id) return;
+    if (!match?.id) return false;
+    const isNew = !this.db.prepare("SELECT 1 found FROM matches WHERE id = ?").get(String(match.id));
     const build = match.build || {};
     const run = match.run || {};
     const speed = Math.max(1, Math.min(8, Number(run.speed) || 1));
@@ -156,6 +284,7 @@ class AiDatabase {
       String(build.model || "UNKNOWN"), String(build.updatedAtBeijing || "UNKNOWN"),
       runMode, speed, run.muted ? 1 : 0,
     );
+    return isNew;
   }
 
   insertEvent(event) {
@@ -174,18 +303,27 @@ class AiDatabase {
     const experience = data?.experience || null;
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      if (data?.memory !== undefined) this.setState("memory", data.memory, now);
-      if (data?.training !== undefined) this.setState("training", data.training, now);
+      if (data?.memory !== undefined) this.setState("memory", { ...data.memory, games: this.canonicalGames() }, now);
+      if (data?.training !== undefined) this.setState("training", { ...data.training, games: this.canonicalGames() }, now);
+      let completed = 0;
       if (experience) {
         this.setState("experience_meta", {
           version: Math.max(3, Number(experience.version) || 3),
-          games: Math.max(0, Number(experience.games) || 0),
+          games: this.canonicalGames(),
           counters: experience.counters || {},
-          currentMatch: experience.currentMatch || null,
+          currentMatch: null,
         }, now);
-        for (const match of Array.isArray(experience.matches) ? experience.matches : []) this.insertMatch(match);
+        if (experience.currentMatch?.id) {
+          this.upsertActiveMatch(experience.currentMatch, data?.sessionId || experience.currentMatch.sessionId, "active");
+        }
+        for (const match of Array.isArray(experience.matches) ? experience.matches : []) {
+          if (this.insertMatch(match)) completed++;
+          this.db.prepare("DELETE FROM active_matches WHERE id = ?").run(String(match.id));
+        }
         for (const event of Array.isArray(experience.events) ? experience.events : []) this.insertEvent(event);
       }
+      if (completed) this.setMeta("canonical_games", String(this.canonicalGames() + completed));
+      this.syncCanonicalGameStates(now);
       this.setMeta("updated_at", new Date(now).toISOString());
       this.prune();
       this.db.exec("COMMIT");
@@ -193,7 +331,7 @@ class AiDatabase {
       this.db.exec("ROLLBACK");
       throw error;
     }
-    return { updatedAt: this.getMeta("updated_at") };
+    return { updatedAt: this.getMeta("updated_at"), canonicalGames: this.canonicalGames() };
   }
 
   prune() {
@@ -238,10 +376,13 @@ class AiDatabase {
     return {
       version: 2,
       updatedAt: this.getMeta("updated_at"),
+      canonicalGames: this.canonicalGames(),
       memory: this.getState("memory", null),
       training: this.getState("training", null),
       experience: {
         ...meta,
+        currentMatch: null,
+        activeMatches: this.activeMatches(runtime ? 16 : 64),
         events,
         matches,
         analytics: this.readAnalytics(),
@@ -401,6 +542,9 @@ class AiDatabase {
       schemaVersion: SCHEMA_VERSION,
       events: Number(this.db.prepare("SELECT COUNT(*) count FROM events").get().count),
       matches: Number(this.db.prepare("SELECT COUNT(*) count FROM matches").get().count),
+      canonicalGames: this.canonicalGames(),
+      activeMatches: Number(this.db.prepare("SELECT COUNT(*) count FROM active_matches WHERE status='active'").get().count),
+      interruptedMatches: Number(this.db.prepare("SELECT COUNT(*) count FROM active_matches WHERE status='interrupted'").get().count),
       runModes,
       eventLimit: EVENT_LIMIT,
       matchLimit: MATCH_LIMIT,

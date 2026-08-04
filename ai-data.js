@@ -8,14 +8,25 @@
   const FILE_URL = "/ai-memory";
   const EVENT_LIMIT = 2400;
   const MATCH_LIMIT = 512;
-  const CORE_DATA_VERSION = 2;
+  const CORE_DATA_VERSION = 3;
+  const POLICY_SAMPLE_SIZE = 20;
+  const POLICY_CONTEXT_LIMIT = 48;
+  const POLICY_DEFAULTS = Object.freeze({ defend: 6.5, survive: 5, attack: 7, clear: 4 });
   const ANALYTICS_VERSION = 3;
   const ANALYTICS_BUILD_LIMIT = 32;
   const TRACKED_MODE_EVENTS = new Set(["ally_death", "base_hit", "enemy_killed", "enemy_cross_midline"]);
   const MEMORY_SYNC_DELAY = 12000;
+  const MEMORY_SYNC_RETRY_DELAY = 3000;
+  const MATCH_HEARTBEAT_INTERVAL = 10000;
+  const SYNC_EVENT_BATCH_SIZE = 120;
+  const SYNC_MATCH_BATCH_SIZE = 24;
   const defaults = {
     weights: { defend: 5, survive: 5, attack: 5, clear: 5 },
     bestWeights: { defend: 5, survive: 5, attack: 5, clear: 5 },
+    policy: { ...POLICY_DEFAULTS },
+    policyByContext: {},
+    policyTuning: {},
+    lastPolicyDecision: null,
     highestStageCleared: 0,
     highestStageUpdatedAt: 0,
     highestStageResetAt: 0,
@@ -32,14 +43,25 @@
     attack: [0, 10],
     clear: [0, 10],
   };
+  const handoff = previous?.createHandoff?.() || null;
+  const sessionId = String(handoff?.sessionId || previous?.sessionId
+    || globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const legacyInFlight = previous && !handoff
+    ? Promise.resolve(previous.syncMemoryFileNow?.()).catch((error) => console.warn("Legacy AI memory sync failed", error))
+    : Promise.resolve();
   let disposed = false;
   let syncTimer = null;
+  let retryTimer = null;
   let syncRequest = null;
-  let pendingEvents = [];
-  let pendingMatches = [];
-  let memory = normalizeMemory(previous?.readMemory?.() || readLocal(MEMORY_KEY) || readLocal(LEGACY_MEMORY_KEY) || defaults);
-  let experience = normalizeExperience(previous?.readExperience?.() || readLocal(EXPERIENCE_KEY) || {});
-  let training = normalizeTraining(previous?.readTraining?.() || {});
+  let syncDirty = Boolean(handoff);
+  let pendingEvents = Array.isArray(handoff?.pendingEvents) ? handoff.pendingEvents.slice() : [];
+  let pendingMatches = Array.isArray(handoff?.pendingMatches) ? handoff.pendingMatches.slice() : [];
+  let memory = normalizeMemory(handoff?.memory || previous?.readMemory?.() || readLocal(MEMORY_KEY) || readLocal(LEGACY_MEMORY_KEY) || defaults);
+  let experience = normalizeExperience(handoff?.experience || previous?.readExperience?.() || readLocal(EXPERIENCE_KEY) || {});
+  let training = normalizeTraining(handoff?.training || previous?.readTraining?.() || {});
+  let ownsCurrentMatch = Boolean(experience.currentMatch && (handoff?.ownsCurrentMatch || previous));
+  let interruptionSentFor = null;
   previous?.dispose?.();
   localStorage.removeItem(LEGACY_MEMORY_KEY);
 
@@ -52,9 +74,44 @@
     for (const key of ["defend", "survive", "attack", "clear"]) {
       const fallback = defaults.weights[key];
       const [minimum, maximum] = WEIGHT_LIMITS[key];
-      result[key] = Math.max(minimum, Math.min(maximum, Number(value[key]) || fallback));
+      const numeric = Number(value[key]);
+      result[key] = Math.max(minimum, Math.min(maximum, Number.isFinite(numeric) ? numeric : fallback));
     }
     return result;
+  }
+
+  function normalizePolicy(value = {}) {
+    const result = {};
+    for (const key of ["defend", "survive", "attack", "clear"]) {
+      const numeric = Number(value?.[key]);
+      result[key] = Math.max(0, Math.min(10, Number.isFinite(numeric) ? numeric : POLICY_DEFAULTS[key]));
+    }
+    return result;
+  }
+
+  function normalizePolicySamples(value) {
+    if (!Array.isArray(value)) return [];
+    return value.slice(-POLICY_SAMPLE_SIZE).map((sample) => ({
+      metric: Number(sample?.metric) || 0,
+      scores: normalizeWeights(sample?.scores),
+    }));
+  }
+
+  function normalizePolicyMaps(policyByContext = {}, policyTuning = {}) {
+    const policyEntries = Object.entries(policyByContext || {}).slice(-POLICY_CONTEXT_LIMIT);
+    const tuningEntries = Object.entries(policyTuning || {}).slice(-POLICY_CONTEXT_LIMIT);
+    return {
+      policies: Object.fromEntries(policyEntries.map(([key, policy]) => [String(key).slice(0, 32), normalizePolicy(policy)])),
+      tuning: Object.fromEntries(tuningEntries.map(([key, state]) => [String(key).slice(0, 32), {
+        phase: state?.phase === "evaluate" ? "evaluate" : "baseline",
+        championPolicy: normalizePolicy(state?.championPolicy),
+        candidatePolicy: state?.candidatePolicy ? normalizePolicy(state.candidatePolicy) : null,
+        baselineMetric: Number.isFinite(Number(state?.baselineMetric)) ? Number(state.baselineMetric) : null,
+        baselineSamples: normalizePolicySamples(state?.baselineSamples),
+        candidateSamples: normalizePolicySamples(state?.candidateSamples),
+        updatedAt: Math.max(0, Number(state?.updatedAt) || 0),
+      }])),
+    };
   }
 
   function normalizeEvolution(value = {}) {
@@ -246,12 +303,20 @@
   }
 
   function normalizeMemory(value = {}) {
-    const currentCoreData = Number(value.coreDataVersion) === CORE_DATA_VERSION;
+    const hasPerformanceData = Number(value.coreDataVersion) >= 2;
+    const policyMaps = normalizePolicyMaps(value.policyByContext, value.policyTuning);
     return {
       ...defaults,
       coreDataVersion: CORE_DATA_VERSION,
-      weights: normalizeWeights(currentCoreData ? value.weights : defaults.weights),
-      bestWeights: normalizeWeights(currentCoreData ? (value.bestWeights || value.weights) : defaults.bestWeights),
+      // D/S/A/C are observed performance scores only. They never directly steer combat.
+      weights: normalizeWeights(hasPerformanceData ? value.weights : defaults.weights),
+      bestWeights: normalizeWeights(hasPerformanceData ? (value.bestWeights || value.weights) : defaults.bestWeights),
+      policy: normalizePolicy(value.policy),
+      policyByContext: policyMaps.policies,
+      policyTuning: policyMaps.tuning,
+      lastPolicyDecision: value.lastPolicyDecision && typeof value.lastPolicyDecision === "object"
+        ? { ...value.lastPolicyDecision }
+        : null,
       highestStageCleared: Math.max(0, Math.floor(Number(value.highestStageCleared) || 0)),
       highestStageUpdatedAt: Math.max(0, Number(value.highestStageUpdatedAt) || 0),
       highestStageResetAt: Math.max(0, Number(value.highestStageResetAt) || 0),
@@ -329,6 +394,7 @@
   function deltaPayload(events, matches) {
     return {
       delta: true,
+      sessionId,
       memory,
       training,
       experience: {
@@ -342,6 +408,14 @@
     };
   }
 
+  function applyCanonicalGames(value) {
+    const games = Math.max(0, Math.floor(Number(value) || 0));
+    if (!games && (training.games || experience.games || memory.games)) return;
+    training.games = games;
+    experience.games = games;
+    memory.games = games;
+  }
+
   function saveLocal() {
     try {
       localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
@@ -352,7 +426,8 @@
 
   function syncMemoryFile() {
     saveLocal();
-    if (!serverMode() || syncTimer) return;
+    syncDirty = true;
+    if (!serverMode() || syncTimer || syncRequest) return;
     syncTimer = setTimeout(() => {
       syncTimer = null;
       postDelta();
@@ -360,27 +435,55 @@
   }
 
   function postDelta() {
-    if (!serverMode() || syncRequest) return syncRequest;
-    const events = pendingEvents.slice();
-    const matches = pendingMatches.slice();
+    if (!serverMode()) return Promise.resolve();
+    if (syncRequest) {
+      syncDirty = true;
+      return syncRequest;
+    }
+    // Accelerated shadow runs can produce more than the browser's 64 KiB
+    // keepalive limit. Send bounded ordinary requests and drain the queue.
+    const events = pendingEvents.slice(0, SYNC_EVENT_BATCH_SIZE);
+    const matches = pendingMatches.slice(0, SYNC_MATCH_BATCH_SIZE);
+    syncDirty = false;
     syncRequest = fetch(FILE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(deltaPayload(events, matches)),
-    }).then((response) => {
+    }).then(async (response) => {
       if (!response.ok) throw new Error(`AI memory sync ${response.status}`);
+      const saved = typeof response.json === "function" ? await response.json() : {};
+      applyCanonicalGames(saved.canonicalGames);
       const sentEvents = new Set(events);
       const sentMatches = new Set(matches);
       pendingEvents = pendingEvents.filter((item) => !sentEvents.has(item));
       pendingMatches = pendingMatches.filter((item) => !sentMatches.has(item));
-    }).catch(() => {}).finally(() => { syncRequest = null; });
+    }).catch((error) => {
+      syncDirty = true;
+      console.warn("AI memory sync failed", error);
+    }).finally(() => { syncRequest = null; });
+    syncRequest.finally(() => {
+      if (!disposed && (syncDirty || pendingEvents.length || pendingMatches.length)) {
+        scheduleSyncRetry(syncDirty ? MEMORY_SYNC_RETRY_DELAY : 0);
+      }
+    });
     return syncRequest;
+  }
+
+  function scheduleSyncRetry(delay = MEMORY_SYNC_RETRY_DELAY) {
+    if (!serverMode() || retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      postDelta();
+    }, delay);
   }
 
   function syncMemoryFileNow() {
     saveLocal();
+    syncDirty = true;
     if (!serverMode()) return;
-    postDelta();
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = null;
+    return postDelta();
   }
 
   async function restoreMemoryFile() {
@@ -390,17 +493,26 @@
       if (!response.ok) return;
       const data = await response.json();
       memory = normalizeMemory(data.memory || memory);
-      experience = normalizeExperience(data.experience || experience);
       training = normalizeTraining(data.training || training);
+      // A match may start while the restore request is in flight. Never replace
+      // that live match with an older server snapshot.
+      if (!ownsCurrentMatch && !pendingEvents.length && !pendingMatches.length) {
+        experience = normalizeExperience(data.experience || experience);
+      }
+      // Legacy servers expose TRAIN GAMES as the completed-match counter;
+      // experience.games used to count starts and can be much larger.
+      applyCanonicalGames(data.canonicalGames ?? data.training?.games ?? data.experience?.games);
       localStorage.removeItem(MEMORY_KEY);
       localStorage.removeItem(EXPERIENCE_KEY);
-    } catch {}
+    } catch (error) {
+      console.warn("AI memory restore failed", error);
+    }
   }
 
   function startMatch(meta = {}) {
-    experience.games++;
     experience.currentMatch = {
-      id: `${Date.now()}-${experience.games}`,
+      id: `${sessionId}-${Date.now()}-${experience.games + 1}`,
+      sessionId,
       stage: Number(meta.stage) || 1,
       startedAt: Date.now(),
       events: 0,
@@ -409,17 +521,60 @@
       build: currentBuild(),
       run: normalizeRunContext(meta.run),
     };
+    ownsCurrentMatch = true;
+    interruptionSentFor = null;
     syncMemoryFile();
+  }
+
+  function interruptMatch(meta = {}) {
+    const match = experience.currentMatch;
+    if (!match?.id || interruptionSentFor === match.id) return false;
+    interruptionSentFor = match.id;
+    const interruptedAt = Date.now();
+    const payload = JSON.stringify({
+      sessionId,
+      stage: Math.max(1, Number(meta.stage) || Number(match.stage) || 1),
+      duration: Math.max(0, Number(meta.duration) || 0),
+      interruptedAt,
+      match: {
+        ...match,
+        sessionId,
+        run: normalizeRunContext(meta.run || match.run),
+        counters: cleanCounters(match.counters),
+        modeCounters: cleanModeCounters(match.modeCounters),
+        lastActiveAt: interruptedAt,
+      },
+    });
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+        const sent = navigator.sendBeacon(`${FILE_URL}/interrupt`, new Blob([payload], { type: "application/json" }));
+        if (sent) return true;
+      }
+      fetch(`${FILE_URL}/interrupt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true,
+      }).catch(() => {});
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function recordExperience(type, detail = {}) {
     if (!type) return;
     const match = experience.currentMatch || {
-      id: `${Date.now()}-${experience.games}`, stage: detail.stage || 1, events: 0, counters: {}, modeCounters: {}, build: currentBuild(), run: normalizeRunContext(detail.run),
+      id: `${sessionId}-${Date.now()}-${experience.games}`, sessionId, stage: detail.stage || 1,
+      events: 0, counters: {}, modeCounters: {}, build: currentBuild(), run: normalizeRunContext(detail.run),
     };
     match.events++;
     match.counters[type] = (match.counters[type] || 0) + 1;
     experience.counters[type] = (experience.counters[type] || 0) + 1;
+    if (type === "enemy_killed" && detail.crossWater) {
+      match.counters.cross_water_kill = (match.counters.cross_water_kill || 0) + 1;
+      experience.counters.cross_water_kill = (experience.counters.cross_water_kill || 0) + 1;
+    }
     const mode = isCurrentMode(detail.mode) ? detail.mode : null;
     if (mode && TRACKED_MODE_EVENTS.has(type)) {
       match.modeCounters ||= {};
@@ -427,6 +582,7 @@
       match.modeCounters[type][mode] = (match.modeCounters[type][mode] || 0) + 1;
     }
     experience.currentMatch = match;
+    ownsCurrentMatch = true;
     const event = {
       matchId: match.id,
       run: normalizeRunContext(match.run),
@@ -442,6 +598,8 @@
       distance: Number.isFinite(detail.distance) ? Math.round(detail.distance) : null,
       bulletDir: detail.bulletDir || null,
       baseSource: detail.baseSource || null,
+      crossWater: Boolean(detail.crossWater),
+      waterTiles: Math.max(0, Math.floor(Number(detail.waterTiles) || 0)),
       baseTimeline: type === "base_hit" ? compactBaseTimeline(detail.baseTimeline) : null,
       historySamples: type === "base_hit" ? Math.max(0, Math.floor(Number(detail.historySamples) || 0)) : null,
       historySeconds: type === "base_hit" ? Math.round((Number(detail.historySeconds) || 0) * 10) / 10 : null,
@@ -453,7 +611,118 @@
     syncMemoryFile();
   }
 
+  function policyContextKey(stage = 1, run = runtimeRunContext()) {
+    const context = normalizeRunContext(run);
+    const runKey = context.mode === "TEST" ? `TEST-${context.speed}X` : "NORMAL";
+    return `S${Math.max(1, Math.floor(Number(stage) || 1))}:${runKey}`;
+  }
+
+  function readPolicy(stage = 1, run = runtimeRunContext()) {
+    const key = policyContextKey(stage, run);
+    return normalizePolicy(memory.policyByContext?.[key] || memory.policy);
+  }
+
+  function averagePolicySamples(samples) {
+    if (!samples.length) return { metric: 0, scores: normalizeWeights({}) };
+    const totals = { defend: 0, survive: 0, attack: 0, clear: 0 };
+    let metric = 0;
+    for (const sample of samples) {
+      metric += Number(sample.metric) || 0;
+      for (const key of Object.keys(totals)) totals[key] += Number(sample.scores?.[key]) || 0;
+    }
+    return {
+      metric: metric / samples.length,
+      scores: Object.fromEntries(Object.keys(totals).map((key) => [key, totals[key] / samples.length])),
+    };
+  }
+
+  function policySample(scores, result, duration) {
+    const metric = (result.win ? 60 : 0)
+      + scores.defend * 4
+      + scores.survive * 2
+      + scores.attack * 1.5
+      + scores.clear
+      - Math.min(300, Math.max(0, duration)) * 0.03;
+    return { metric: Math.round(metric * 100) / 100, scores };
+  }
+
+  function prunePolicyContexts() {
+    for (const collection of [memory.policyByContext, memory.policyTuning]) {
+      const keys = Object.keys(collection || {});
+      while (keys.length > POLICY_CONTEXT_LIMIT) delete collection[keys.shift()];
+    }
+  }
+
+  function tunePolicy(match, result, scores, stage, duration) {
+    if (!match || !scores) return;
+    const key = policyContextKey(stage, result.run || match.run);
+    const activePolicy = readPolicy(stage, result.run || match.run);
+    const state = memory.policyTuning[key] || {
+      phase: "baseline",
+      championPolicy: activePolicy,
+      candidatePolicy: null,
+      baselineMetric: null,
+      baselineSamples: [],
+      candidateSamples: [],
+      updatedAt: 0,
+    };
+    const sample = policySample(scores, result, duration);
+
+    if (state.phase === "evaluate" && state.candidatePolicy) {
+      state.candidateSamples = normalizePolicySamples([...state.candidateSamples, sample]);
+      if (state.candidateSamples.length >= POLICY_SAMPLE_SIZE) {
+        const candidate = averagePolicySamples(state.candidateSamples);
+        const baselineMetric = Number(state.baselineMetric) || 0;
+        const accepted = candidate.metric >= baselineMetric - 0.5;
+        const chosen = accepted ? state.candidatePolicy : state.championPolicy;
+        memory.policyByContext[key] = normalizePolicy(chosen);
+        memory.lastPolicyDecision = {
+          context: key,
+          status: accepted ? "ACCEPTED" : "ROLLED_BACK",
+          baselineMetric: Math.round(baselineMetric * 100) / 100,
+          candidateMetric: Math.round(candidate.metric * 100) / 100,
+          samples: POLICY_SAMPLE_SIZE,
+          updatedAt: Date.now(),
+        };
+        state.phase = "baseline";
+        state.championPolicy = normalizePolicy(chosen);
+        state.candidatePolicy = null;
+        state.baselineMetric = null;
+        state.baselineSamples = [];
+        state.candidateSamples = [];
+      }
+    } else {
+      state.phase = "baseline";
+      state.championPolicy = activePolicy;
+      state.baselineSamples = normalizePolicySamples([...state.baselineSamples, sample]);
+      if (state.baselineSamples.length >= POLICY_SAMPLE_SIZE) {
+        const baseline = averagePolicySamples(state.baselineSamples);
+        const candidate = normalizePolicy(Object.fromEntries(Object.keys(POLICY_DEFAULTS).map((name) => {
+          const delta = Math.max(-0.12, Math.min(0.24, (7 - baseline.scores[name]) * 0.08));
+          return [name, activePolicy[name] + delta];
+        })));
+        state.phase = "evaluate";
+        state.baselineMetric = baseline.metric;
+        state.championPolicy = activePolicy;
+        state.candidatePolicy = candidate;
+        state.candidateSamples = [];
+        memory.policyByContext[key] = candidate;
+        memory.lastPolicyDecision = {
+          context: key,
+          status: "EVALUATING",
+          baselineMetric: Math.round(baseline.metric * 100) / 100,
+          samples: POLICY_SAMPLE_SIZE,
+          updatedAt: Date.now(),
+        };
+      }
+    }
+    state.updatedAt = Date.now();
+    memory.policyTuning[key] = state;
+    prunePolicyContexts();
+  }
+
   function updatePerformanceData(match, result) {
+    if (!match) return null;
     const counters = match?.counters || {};
     const count = (key) => Math.max(0, Number(counters[key]) || 0);
     const clamp = (value) => Math.max(0, Math.min(10, value));
@@ -467,11 +736,12 @@
         - count("target_stale") * 0.6),
     };
     const previous = normalizeWeights(memory.weights);
-    const smoothing = 0.25;
+    const smoothing = 0.1;
     memory.weights = normalizeWeights(Object.fromEntries(Object.keys(scores).map((key) => [
       key,
       previous[key] * (1 - smoothing) + scores[key] * smoothing,
     ])));
+    return scores;
   }
 
   function finishMatch(result = {}) {
@@ -486,7 +756,8 @@
     evolution.score = evolution.matches <= 1 ? resultScore : evolution.score * 0.88 + resultScore * 0.12;
     evolution.bestScore = Math.max(evolution.bestScore, evolution.score);
     memory.lastScore = Math.round(resultScore);
-    updatePerformanceData(match, result);
+    const scores = updatePerformanceData(match, result);
+    tunePolicy(match, result, scores, stage, duration);
     if (result.win) {
       const stageKey = String(stage);
       const previousBest = evolution.stageBest[stageKey];
@@ -503,8 +774,11 @@
       match.duration = Math.round((Number(result.duration) || 0) * 10) / 10;
       match.endedAt = Date.now();
       if (result.win) {
-        memory.highestStageCleared = Math.max(memory.highestStageCleared, stage);
-        memory.highestStageUpdatedAt = Date.now();
+        const previousHighest = Math.max(0, Math.floor(Number(memory.highestStageCleared) || 0));
+        if (stage > previousHighest) {
+          memory.highestStageCleared = stage;
+          memory.highestStageUpdatedAt = match.endedAt;
+        }
       }
       const summary = {
         id: match.id,
@@ -523,9 +797,10 @@
       experience.matches.push(summary);
       pendingMatches.push(summary);
       experience.matches = experience.matches.slice(-MATCH_LIMIT);
+      applyCanonicalGames(training.games + 1);
     }
-    memory.games = Math.max(Number(memory.games) || 0, experience.games);
     experience.currentMatch = null;
+    ownsCurrentMatch = false;
     syncMemoryFileNow();
   }
 
@@ -560,27 +835,61 @@
   function dispose() {
     disposed = true;
     if (syncTimer) clearTimeout(syncTimer);
+    if (retryTimer) clearTimeout(retryTimer);
     syncTimer = null;
+    retryTimer = null;
+    clearInterval(heartbeatTimer);
   }
+
+  function createHandoff() {
+    return {
+      memory,
+      experience,
+      training,
+      pendingEvents: pendingEvents.slice(),
+      pendingMatches: pendingMatches.slice(),
+      ownsCurrentMatch,
+      sessionId,
+      inFlight: syncRequest,
+    };
+  }
+
+  const heartbeatTimer = setInterval(() => {
+    if (!ownsCurrentMatch || !experience.currentMatch || disposed) return;
+    experience.currentMatch.lastActiveAt = Date.now();
+    syncMemoryFileNow();
+  }, MATCH_HEARTBEAT_INTERVAL);
 
   const services = {
     createController() { throw new Error("AI CORE controller is not loaded"); },
     readMemory: () => memory,
+    readPolicy,
     readExperience: () => experience,
     readExperienceDbStats,
     startMatch,
     recordExperience,
     finishMatch,
+    interruptMatch,
     syncMemoryFile,
     syncMemoryFileNow,
     restoreMemoryFile,
     resetMemory,
     readTraining: () => training,
     addTrainingSeconds(seconds = 0) { training.seconds += Math.max(0, Number(seconds) || 0); },
-    incrementTrainingGames() { training.games++; syncMemoryFileNow(); },
+    // Legacy game.js calls this before finishMatch. Completion is counted once
+    // inside finishMatch and then authoritatively reconciled by SQLite.
+    incrementTrainingGames() {},
     flushTraining,
+    get sessionId() { return sessionId; },
+    createHandoff,
     dispose,
-    ready: restoreMemoryFile(),
+    ready: previous
+      ? Promise.resolve(handoff?.inFlight)
+        .catch((error) => console.warn("Previous AI memory sync failed", error))
+        .then(() => legacyInFlight)
+        .then(() => syncMemoryFileNow())
+        .catch((error) => console.warn("AI memory handoff failed", error))
+      : restoreMemoryFile(),
   };
   window.TankPartnerAI = window.TankPartnerAIEngine?.enhance?.(services) || services;
 })();

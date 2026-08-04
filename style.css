@@ -280,8 +280,9 @@ button:focus-visible {
 }
 
 #version {
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.1;
+  white-space: nowrap;
 }
 
 .enemy-bar {

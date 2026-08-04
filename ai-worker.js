@@ -1,4 +1,6 @@
 (function () {
+  let shadowClockToken = 0;
+  let shadowClockSleeper = null;
   const TILE_COST = {
     ".": 1,
     "F": 1,
@@ -97,8 +99,47 @@
     return distMap;
   }
 
+  function clockSleep(milliseconds) {
+    const waitAsync = /** @type {any} */ (Atomics).waitAsync;
+    if (typeof SharedArrayBuffer !== "undefined" && typeof waitAsync === "function") {
+      shadowClockSleeper ||= new Int32Array(new SharedArrayBuffer(4));
+      return Promise.resolve(waitAsync(shadowClockSleeper, 0, 0, milliseconds).value);
+    }
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  }
+
+  async function runShadowClock(token, payload = {}) {
+    const speed = Math.max(1, Math.min(8, Number(payload.speed) || 1));
+    const fixedDt = Math.max(1 / 240, Math.min(1 / 20, Number(payload.fixedDt) || 1 / 60));
+    const intervalMs = Math.max(25, Math.min(200, Number(payload.intervalMs) || 50));
+    let carry = 0;
+    let previous = performance.now();
+    while (token === shadowClockToken) {
+      await clockSleep(intervalMs);
+      if (token !== shadowClockToken) return;
+      const now = performance.now();
+      const elapsedMs = Math.max(1, Math.min(1000, now - previous));
+      previous = now;
+      carry += elapsedMs / 1000 * speed / fixedDt;
+      const steps = Math.floor(carry);
+      carry -= steps;
+      if (steps > 0) self.postMessage({ type: "clock-tick", token, steps, elapsedMs });
+    }
+  }
+
   self.onmessage = (event) => {
     const message = event.data || {};
+    if (message.type === "clock-start") {
+      const token = ++shadowClockToken;
+      runShadowClock(token, message.payload).catch((error) => {
+        self.postMessage({ type: "clock-error", error: error?.message || "shadow clock failed" });
+      });
+      return;
+    }
+    if (message.type === "clock-stop") {
+      shadowClockToken++;
+      return;
+    }
     if (message.type !== "distance") return;
     try {
       self.postMessage({

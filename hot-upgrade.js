@@ -8,7 +8,7 @@
       files: ["ai-core.js", "ai-data.js"],
       developer: "CODEX",
       model: "gpt-5.6-sol / medium",
-      updatedAtBeijing: "2026-07-13 10:01:30 CST",
+      updatedAtBeijing: "2026-07-13 10:01 CST",
     },
     game: { version: "20260713095154", file: "game.js" },
     pollSeconds: 5,
@@ -41,14 +41,28 @@
   }
 
   function setAiVersionInfo(version = state.version) {
-    window.FCGameHotAPI?.setAiVersionInfo?.(version?.ai || DEFAULT_VERSION.ai);
+    const info = version?.ai || DEFAULT_VERSION.ai;
+    window.FCGameHotAPI?.setAiVersionInfo?.({
+      ...info,
+      updatedAtBeijing: String(info.updatedAtBeijing || "UNKNOWN")
+        .replace(/(\d{2}:\d{2}):\d{2}(?=\s*(?:CST)?$)/i, "$1"),
+    });
   }
 
   function setGameVersionInfo(version = state.version) {
-    window.FCGameHotAPI?.setGameVersionInfo?.({
+    const info = {
       developer: version?.ai?.developer || DEFAULT_VERSION.ai.developer,
       ...(version?.game || DEFAULT_VERSION.game),
-    });
+    };
+    window.FCGameHotAPI?.setGameVersionInfo?.(info);
+    // Keep the visible label independent from older game.js formatters that
+    // rendered hour and minute as one opaque number during a live upgrade.
+    const digits = String(info.version || "").replace(/\D/g, "");
+    const minuteVersion = digits.length >= 12
+      ? `${digits.slice(4, 8)} ${digits.slice(8, 10)}:${digits.slice(10, 12)}`
+      : digits.slice(0, 8);
+    const label = document.getElementById("version");
+    if (label && minuteVersion) label.textContent = `${info.developer} ${minuteVersion}`;
   }
 
   function renderVersion(version = state.version) {
@@ -210,6 +224,7 @@
         await loadScript("ai-core.js", state.version.ai.version || state.version.ai.hash, "fc-hot-ai-core");
         await loadScript(state.version.ai.file || "ai-data.js", state.version.ai.version || state.version.ai.hash, "fc-hot-ai");
       }
+      await window.TankPartnerAI?.ready;
       if (!window.FCGameHotAPI) {
         await loadScript(state.version.game.file || "game.js", state.version.game.version || state.version.game.hash, "fc-hot-game");
       }
