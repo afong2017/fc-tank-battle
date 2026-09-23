@@ -3347,8 +3347,14 @@ function draw() {
   ctx.restore();
 }
 
+function simulationFrameElapsed(time, previousTime) {
+  const elapsed = Math.max(0, (time - previousTime) / 1000 || 0);
+  // Recover ordinary dropped frames, but never replay a suspended tab's history.
+  return elapsed > 0.5 ? 0 : Math.min(0.25, elapsed);
+}
+
 function loop(time) {
-  const frameDt = Math.min(MAX_FRAME_DT, (time - lastTime) / 1000 || 0);
+  const frameDt = simulationFrameElapsed(time, lastTime);
   lastTime = time;
   if (document.hidden) {
     requestAnimationFrame(loop);
@@ -3372,10 +3378,10 @@ function loop(time) {
   else if (state === "paused" && padJustPressed(9)) state = "playing";
   pressed.clear();
   if (state === "playing" && shadowTestLeaseHeld) {
-    const maxSteps = Math.ceil(MAX_FRAME_DT * INTERNAL_TEST_SPEED / FIXED_DT) + 1;
+    const maxSteps = Math.ceil(8 * INTERNAL_TEST_SPEED);
     updateAccumulator = Math.min(
       updateAccumulator + frameDt * INTERNAL_TEST_SPEED,
-      FIXED_DT * maxSteps,
+      0.25 * INTERNAL_TEST_SPEED,
     );
     let steps = 0;
     while (updateAccumulator + 1e-9 >= FIXED_DT && steps < maxSteps) {

@@ -42,7 +42,7 @@ body {
 .playfield {
   position: relative;
   display: grid;
-  grid-template-rows: auto 54px 24px;
+  grid-template-rows: auto 54px 38px;
   width: 100%;
   background: #070707;
   image-rendering: pixelated;
@@ -125,7 +125,7 @@ canvas {
   grid-template-columns: auto auto auto auto auto auto auto auto auto minmax(125px, 1fr);
   align-items: center;
   gap: 5px;
-  min-height: 24px;
+  min-height: 38px;
   padding: 3px 10px 5px;
   border-top: 2px solid #2f3038;
   background: #14141a;
@@ -151,6 +151,23 @@ canvas {
 
 .ai-version-panel .ai-engine-status.fallback {
   color: #f0c85c;
+}
+
+#aiUpdatedInfo {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  line-height: 1;
+}
+
+#aiUpdatedInfo .ai-update-time {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+#aiUpdatedInfo .ai-advisor-data {
+  color: #66d26e;
+  font-size: 13px;
 }
 
 h1 {
@@ -352,7 +369,7 @@ button:focus-visible {
   }
 
   .playfield {
-    grid-template-rows: auto 96px 24px;
+    grid-template-rows: auto 96px 38px;
   }
 
   .ai-bottom-panel strong {

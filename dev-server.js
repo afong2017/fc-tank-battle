@@ -28,7 +28,7 @@ const PORT = Number(process.env.PORT) || 8080;
 const MAX_JSON_BODY_BYTES = 25 * 1024 * 1024;
 const AI_META = {
   developer: "CODEX",
-  model: "gpt-5.6-sol / medium",
+  model: "GPT-5",
 };
 const GAME_FILES = ["game.js", "index.html", "style.css", "hot-upgrade.js", "ai-worker.js"];
 const AI_FILES = ["ai-core.js", "ai-data.js"];

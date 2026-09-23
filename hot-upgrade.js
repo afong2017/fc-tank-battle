@@ -7,7 +7,7 @@
       file: "ai-data.js",
       files: ["ai-core.js", "ai-data.js"],
       developer: "CODEX",
-      model: "gpt-5.6-sol / medium",
+      model: "GPT-5",
       updatedAtBeijing: "2026-07-13 10:01 CST",
     },
     game: { version: "20260713095154", file: "game.js" },

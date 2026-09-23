@@ -8,10 +8,19 @@
   const FILE_URL = "/ai-memory";
   const EVENT_LIMIT = 2400;
   const MATCH_LIMIT = 512;
-  const CORE_DATA_VERSION = 3;
+  const CORE_DATA_VERSION = 5;
   const POLICY_SAMPLE_SIZE = 20;
+  const POLICY_TUNING_VERSION = 2;
   const POLICY_CONTEXT_LIMIT = 48;
   const POLICY_DEFAULTS = Object.freeze({ defend: 6.5, survive: 5, attack: 7, clear: 4 });
+  const AUTONOMY_VERSION = 1;
+  const AUTONOMY_STATE_LIMIT = 1024;
+  const AUTONOMY_REPLAY_LIMIT = 1600;
+  const AUTONOMY_TRACE_LIMIT = 48;
+  const AUTONOMY_ACTION_LIMIT = 8;
+  const AUTONOMY_MIN_CHAMPION_VISITS = 4;
+  const AUTONOMY_GAMMA = 0.86;
+  const AUTONOMY_ALPHA = 0.18;
   const ANALYTICS_VERSION = 3;
   const ANALYTICS_BUILD_LIMIT = 32;
   const TRACKED_MODE_EVENTS = new Set(["ally_death", "base_hit", "enemy_killed", "enemy_cross_midline"]);
@@ -35,6 +44,7 @@
     patches: [],
     lastFailures: [],
     evolution: null,
+    autonomy: null,
     lastScore: 0,
   };
   const WEIGHT_LIMITS = {
@@ -60,6 +70,7 @@
   let memory = normalizeMemory(handoff?.memory || previous?.readMemory?.() || readLocal(MEMORY_KEY) || readLocal(LEGACY_MEMORY_KEY) || defaults);
   let experience = normalizeExperience(handoff?.experience || previous?.readExperience?.() || readLocal(EXPERIENCE_KEY) || {});
   let training = normalizeTraining(handoff?.training || previous?.readTraining?.() || {});
+  let autonomyRuntime = normalizeAutonomyRuntime(/** @type {any} */ (handoff)?.autonomyRuntime);
   let ownsCurrentMatch = Boolean(experience.currentMatch && (handoff?.ownsCurrentMatch || previous));
   let interruptionSentFor = null;
   previous?.dispose?.();
@@ -94,6 +105,13 @@
     return value.slice(-POLICY_SAMPLE_SIZE).map((sample) => ({
       metric: Number(sample?.metric) || 0,
       scores: normalizeWeights(sample?.scores),
+      win: sample?.win ? 1 : 0,
+      baseHit: Math.max(0, Number(sample?.baseHit) || 0),
+      deaths: Math.max(0, Number(sample?.deaths) || 0),
+      stuck: Math.max(0, Number(sample?.stuck) || 0),
+      kills: Math.max(0, Number(sample?.kills) || 0),
+      crossings: Math.max(0, Number(sample?.crossings) || 0),
+      duration: Math.max(0, Number(sample?.duration) || 0),
     }));
   }
 
@@ -102,15 +120,86 @@
     const tuningEntries = Object.entries(policyTuning || {}).slice(-POLICY_CONTEXT_LIMIT);
     return {
       policies: Object.fromEntries(policyEntries.map(([key, policy]) => [String(key).slice(0, 32), normalizePolicy(policy)])),
-      tuning: Object.fromEntries(tuningEntries.map(([key, state]) => [String(key).slice(0, 32), {
-        phase: state?.phase === "evaluate" ? "evaluate" : "baseline",
-        championPolicy: normalizePolicy(state?.championPolicy),
-        candidatePolicy: state?.candidatePolicy ? normalizePolicy(state.candidatePolicy) : null,
-        baselineMetric: Number.isFinite(Number(state?.baselineMetric)) ? Number(state.baselineMetric) : null,
-        baselineSamples: normalizePolicySamples(state?.baselineSamples),
-        candidateSamples: normalizePolicySamples(state?.candidateSamples),
-        updatedAt: Math.max(0, Number(state?.updatedAt) || 0),
-      }])),
+      tuning: Object.fromEntries(tuningEntries.map(([key, state]) => {
+        const compatible = Number(state?.version) === POLICY_TUNING_VERSION;
+        return [String(key).slice(0, 32), {
+          version: POLICY_TUNING_VERSION,
+          phase: compatible && state?.phase === "evaluate" ? "evaluate" : "baseline",
+          championPolicy: normalizePolicy(state?.championPolicy),
+          candidatePolicy: compatible && state?.candidatePolicy ? normalizePolicy(state.candidatePolicy) : null,
+          baselineMetric: compatible && Number.isFinite(Number(state?.baselineMetric)) ? Number(state.baselineMetric) : null,
+          baselineSamples: compatible ? normalizePolicySamples(state?.baselineSamples) : [],
+          candidateSamples: compatible ? normalizePolicySamples(state?.candidateSamples) : [],
+          updatedAt: Math.max(0, Number(state?.updatedAt) || 0),
+        }];
+      })),
+    };
+  }
+
+  function normalizeAutonomyAction(value = {}) {
+    return {
+      q: Math.max(-240, Math.min(240, Number(value?.q) || 0)),
+      visits: Math.max(0, Math.floor(Number(value?.visits) || 0)),
+      reward: Math.max(-240, Math.min(240, Number(value?.reward) || 0)),
+      successes: Math.max(0, Math.floor(Number(value?.successes) || 0)),
+      failures: Math.max(0, Math.floor(Number(value?.failures) || 0)),
+      updatedAt: Math.max(0, Number(value?.updatedAt) || 0),
+    };
+  }
+
+  function normalizeAutonomy(value = {}) {
+    const states = {};
+    const entries = Object.entries(value?.states || {})
+      .sort((a, b) => (Number(a[1]?.updatedAt) || 0) - (Number(b[1]?.updatedAt) || 0))
+      .slice(-AUTONOMY_STATE_LIMIT);
+    for (const [rawStateKey, rawState] of entries) {
+      const stateKey = String(rawStateKey).slice(0, 180);
+      const actionEntries = Object.entries(rawState?.actions || {}).slice(-AUTONOMY_ACTION_LIMIT);
+      states[stateKey] = {
+        visits: Math.max(0, Math.floor(Number(rawState?.visits) || 0)),
+        champion: rawState?.champion ? String(rawState.champion).slice(0, 64) : null,
+        actions: Object.fromEntries(actionEntries.map(([key, action]) => [
+          String(key).slice(0, 64),
+          normalizeAutonomyAction(action),
+        ])),
+        updatedAt: Math.max(0, Number(rawState?.updatedAt) || 0),
+      };
+    }
+    const replay = Array.isArray(value?.replay) ? value.replay.slice(-AUTONOMY_REPLAY_LIMIT).map((sample) => ({
+      state: String(sample?.state || "").slice(0, 180),
+      action: String(sample?.action || "").slice(0, 64),
+      reward: Math.max(-240, Math.min(240, Number(sample?.reward) || 0)),
+      nextState: sample?.nextState ? String(sample.nextState).slice(0, 180) : null,
+      terminal: Boolean(sample?.terminal),
+      priority: Math.max(0, Math.min(480, Number(sample?.priority) || 0)),
+      stage: Math.max(1, Math.floor(Number(sample?.stage) || 1)),
+      updatedAt: Math.max(0, Number(sample?.updatedAt) || 0),
+    })).filter((sample) => sample.state && sample.action) : [];
+    return {
+      version: AUTONOMY_VERSION,
+      generation: Math.max(0, Math.floor(Number(value?.generation) || 0)),
+      decisions: Math.max(0, Math.floor(Number(value?.decisions) || 0)),
+      updates: Math.max(0, Math.floor(Number(value?.updates) || 0)),
+      replayUpdates: Math.max(0, Math.floor(Number(value?.replayUpdates) || 0)),
+      promotions: Math.max(0, Math.floor(Number(value?.promotions) || 0)),
+      rollbacks: Math.max(0, Math.floor(Number(value?.rollbacks) || 0)),
+      states,
+      replay,
+      lastDecision: value?.lastDecision && typeof value.lastDecision === "object"
+        ? { ...value.lastDecision }
+        : null,
+    };
+  }
+
+  function normalizeAutonomyRuntime(value = {}) {
+    const pending = value?.pending && typeof value.pending === "object" ? value.pending : {};
+    const traces = value?.traces && typeof value.traces === "object" ? value.traces : {};
+    return {
+      pending: { ...pending },
+      traces: Object.fromEntries(Object.entries(traces).map(([player, trace]) => [
+        player,
+        Array.isArray(trace) ? trace.slice(-AUTONOMY_TRACE_LIMIT) : [],
+      ])),
     };
   }
 
@@ -325,6 +414,7 @@
       patches: [],
       lastFailures: [],
       evolution: normalizeEvolution(value.evolution),
+      autonomy: normalizeAutonomy(value.autonomy),
       lastScore: Number(value.lastScore) || 0,
     };
   }
@@ -510,6 +600,7 @@
   }
 
   function startMatch(meta = {}) {
+    autonomyRuntime = normalizeAutonomyRuntime({});
     experience.currentMatch = {
       id: `${sessionId}-${Date.now()}-${experience.games + 1}`,
       sessionId,
@@ -571,6 +662,7 @@
     match.events++;
     match.counters[type] = (match.counters[type] || 0) + 1;
     experience.counters[type] = (experience.counters[type] || 0) + 1;
+    rewardAutonomyEvent(type, detail);
     if (type === "enemy_killed" && detail.crossWater) {
       match.counters.cross_water_kill = (match.counters.cross_water_kill || 0) + 1;
       experience.counters.cross_water_kill = (experience.counters.cross_water_kill || 0) + 1;
@@ -589,6 +681,7 @@
       stage: detail.stage ?? match.stage,
       time: Math.round((Number(detail.time) || 0) * 10) / 10,
       type,
+      player: detail.player || null,
       tank: compact(detail.tank),
       ally: compact(detail.ally),
       enemy: compact(detail.enemy),
@@ -623,27 +716,94 @@
   }
 
   function averagePolicySamples(samples) {
-    if (!samples.length) return { metric: 0, scores: normalizeWeights({}) };
+    if (!samples.length) return {
+      metric: 0,
+      scores: normalizeWeights({}),
+      winRate: 0,
+      baseHitRate: 0,
+      deaths: 0,
+      stuck: 0,
+      kills: 0,
+      crossings: 0,
+      duration: 0,
+    };
     const totals = { defend: 0, survive: 0, attack: 0, clear: 0 };
     let metric = 0;
+    const outcomes = { win: 0, baseHit: 0, deaths: 0, stuck: 0, kills: 0, crossings: 0, duration: 0 };
     for (const sample of samples) {
       metric += Number(sample.metric) || 0;
       for (const key of Object.keys(totals)) totals[key] += Number(sample.scores?.[key]) || 0;
+      for (const key of Object.keys(outcomes)) outcomes[key] += Number(sample[key]) || 0;
     }
     return {
       metric: metric / samples.length,
       scores: Object.fromEntries(Object.keys(totals).map((key) => [key, totals[key] / samples.length])),
+      winRate: outcomes.win / samples.length,
+      baseHitRate: outcomes.baseHit / samples.length,
+      deaths: outcomes.deaths / samples.length,
+      stuck: outcomes.stuck / samples.length,
+      kills: outcomes.kills / samples.length,
+      crossings: outcomes.crossings / samples.length,
+      duration: outcomes.duration / samples.length,
     };
   }
 
-  function policySample(scores, result, duration) {
+  function policySample(match, scores, result, duration) {
+    const counters = match?.counters || {};
+    const count = (key) => Math.max(0, Number(counters[key]) || 0);
     const metric = (result.win ? 60 : 0)
       + scores.defend * 4
       + scores.survive * 2
       + scores.attack * 1.5
       + scores.clear
       - Math.min(300, Math.max(0, duration)) * 0.03;
-    return { metric: Math.round(metric * 100) / 100, scores };
+    return {
+      metric: Math.round(metric * 100) / 100,
+      scores,
+      win: result.win ? 1 : 0,
+      baseHit: count("base_hit") > 0 ? 1 : 0,
+      deaths: count("ally_death"),
+      stuck: count("ally_stuck") + count("route_clear_failed") + count("target_stale")
+        + count("ai_route_loop") * 0.5,
+      kills: count("enemy_killed"),
+      crossings: count("enemy_cross_midline"),
+      duration: Math.max(0, Number(duration) || 0),
+    };
+  }
+
+  function evolvedPolicy(activePolicy, baseline) {
+    const lossRate = 1 - baseline.winRate;
+    const deltas = {
+      defend: baseline.baseHitRate > 0
+        ? Math.min(0.42, 0.12 + baseline.baseHitRate * 0.42 + Math.max(0, baseline.crossings - 5) * 0.012)
+        : -0.06,
+      survive: baseline.deaths > 1.5
+        ? Math.min(0.3, 0.06 + (baseline.deaths - 1.5) * 0.06)
+        : -0.04,
+      attack: lossRate > 0.25 || baseline.kills < 14
+        ? Math.min(0.32, 0.08 + lossRate * 0.16 + Math.max(0, 14 - baseline.kills) * 0.012)
+        : -0.04,
+      clear: baseline.stuck > 0
+        ? Math.min(0.36, 0.08 + baseline.stuck * 0.08)
+        : -0.05,
+    };
+    return normalizePolicy(Object.fromEntries(Object.keys(POLICY_DEFAULTS).map((name) => [
+      name,
+      activePolicy[name] + deltas[name],
+    ])));
+  }
+
+  function policyCandidateAccepted(baseline, candidate) {
+    const baseSafe = candidate.baseHitRate <= baseline.baseHitRate + 0.049;
+    const mobilitySafe = candidate.stuck <= baseline.stuck + 0.15;
+    const survivalSafe = candidate.deaths <= baseline.deaths + 0.35;
+    const resultSafe = candidate.winRate + 0.051 >= baseline.winRate;
+    const useful = candidate.metric >= baseline.metric - 0.25
+      && (candidate.metric > baseline.metric + 0.2
+        || candidate.winRate > baseline.winRate
+        || candidate.baseHitRate < baseline.baseHitRate);
+    return { accepted: baseSafe && mobilitySafe && survivalSafe && resultSafe && useful,
+      safeguards: { baseSafe, mobilitySafe, survivalSafe, resultSafe, useful } };
   }
 
   function prunePolicyContexts() {
@@ -658,6 +818,7 @@
     const key = policyContextKey(stage, result.run || match.run);
     const activePolicy = readPolicy(stage, result.run || match.run);
     const state = memory.policyTuning[key] || {
+      version: POLICY_TUNING_VERSION,
       phase: "baseline",
       championPolicy: activePolicy,
       candidatePolicy: null,
@@ -666,14 +827,19 @@
       candidateSamples: [],
       updatedAt: 0,
     };
-    const sample = policySample(scores, result, duration);
+    state.version = POLICY_TUNING_VERSION;
+    const sample = policySample(match, scores, result, duration);
 
     if (state.phase === "evaluate" && state.candidatePolicy) {
       state.candidateSamples = normalizePolicySamples([...state.candidateSamples, sample]);
       if (state.candidateSamples.length >= POLICY_SAMPLE_SIZE) {
         const candidate = averagePolicySamples(state.candidateSamples);
         const baselineMetric = Number(state.baselineMetric) || 0;
-        const accepted = candidate.metric >= baselineMetric - 0.5;
+        const verdict = policyCandidateAccepted({
+          ...averagePolicySamples(state.baselineSamples),
+          metric: baselineMetric,
+        }, candidate);
+        const accepted = verdict.accepted;
         const chosen = accepted ? state.candidatePolicy : state.championPolicy;
         memory.policyByContext[key] = normalizePolicy(chosen);
         memory.lastPolicyDecision = {
@@ -681,6 +847,7 @@
           status: accepted ? "ACCEPTED" : "ROLLED_BACK",
           baselineMetric: Math.round(baselineMetric * 100) / 100,
           candidateMetric: Math.round(candidate.metric * 100) / 100,
+          safeguards: verdict.safeguards,
           samples: POLICY_SAMPLE_SIZE,
           updatedAt: Date.now(),
         };
@@ -697,10 +864,7 @@
       state.baselineSamples = normalizePolicySamples([...state.baselineSamples, sample]);
       if (state.baselineSamples.length >= POLICY_SAMPLE_SIZE) {
         const baseline = averagePolicySamples(state.baselineSamples);
-        const candidate = normalizePolicy(Object.fromEntries(Object.keys(POLICY_DEFAULTS).map((name) => {
-          const delta = Math.max(-0.12, Math.min(0.24, (7 - baseline.scores[name]) * 0.08));
-          return [name, activePolicy[name] + delta];
-        })));
+        const candidate = evolvedPolicy(activePolicy, baseline);
         state.phase = "evaluate";
         state.baselineMetric = baseline.metric;
         state.championPolicy = activePolicy;
@@ -721,6 +885,281 @@
     prunePolicyContexts();
   }
 
+  function autonomyState(stateKey, create = true) {
+    const key = String(stateKey || "").slice(0, 180);
+    if (!key) return null;
+    let state = memory.autonomy.states[key];
+    if (!state && create) {
+      state = { visits: 0, champion: null, actions: {}, updatedAt: Date.now() };
+      memory.autonomy.states[key] = state;
+    }
+    return state || null;
+  }
+
+  function autonomyAction(state, actionKey, create = true) {
+    if (!state) return null;
+    const key = String(actionKey || "").slice(0, 64);
+    if (!key) return null;
+    let action = state.actions[key];
+    if (!action && create) {
+      action = normalizeAutonomyAction({ updatedAt: Date.now() });
+      state.actions[key] = action;
+      const actionKeys = Object.keys(state.actions);
+      if (actionKeys.length > AUTONOMY_ACTION_LIMIT) {
+        const removable = actionKeys
+          .filter((candidate) => candidate !== state.champion && candidate !== key)
+          .sort((a, b) => state.actions[a].visits - state.actions[b].visits
+            || state.actions[a].updatedAt - state.actions[b].updatedAt)[0];
+        if (removable) delete state.actions[removable];
+      }
+    }
+    return action || null;
+  }
+
+  function autonomyConservativeScore(action) {
+    if (!action?.visits) return -Infinity;
+    return action.q - 18 / Math.sqrt(action.visits);
+  }
+
+  function refreshAutonomyChampion(stateKey, state) {
+    if (!state) return;
+    const eligible = Object.entries(state.actions)
+      .filter(([, action]) => action.visits >= AUTONOMY_MIN_CHAMPION_VISITS)
+      .sort((a, b) => autonomyConservativeScore(b[1]) - autonomyConservativeScore(a[1]));
+    if (!eligible.length) return;
+    const [challengerKey, challenger] = eligible[0];
+    const currentKey = state.champion;
+    const current = currentKey ? state.actions[currentKey] : null;
+    if (current && currentKey !== challengerKey
+      && autonomyConservativeScore(challenger) < autonomyConservativeScore(current) + 3) return;
+    if (currentKey === challengerKey) return;
+    state.champion = challengerKey;
+    memory.autonomy.generation++;
+    const rolledBack = Boolean(current && current.q < 0 && challenger.q >= current.q);
+    if (rolledBack) memory.autonomy.rollbacks++;
+    else memory.autonomy.promotions++;
+    memory.autonomy.lastDecision = {
+      status: rolledBack ? "ROLLED_BACK" : "PROMOTED",
+      state: stateKey,
+      previous: currentKey || null,
+      champion: challengerKey,
+      score: Math.round(challenger.q * 100) / 100,
+      visits: challenger.visits,
+      updatedAt: Date.now(),
+    };
+  }
+
+  function maxAutonomyQ(stateKey) {
+    const state = autonomyState(stateKey, false);
+    if (!state) return 0;
+    const values = Object.values(state.actions).filter((action) => action.visits > 0).map((action) => action.q);
+    return values.length ? Math.max(...values) : 0;
+  }
+
+  function trainAutonomyValue(stateKey, actionKey, target, rate = AUTONOMY_ALPHA) {
+    const state = autonomyState(stateKey);
+    const action = autonomyAction(state, actionKey);
+    if (!state || !action) return 0;
+    const boundedTarget = Math.max(-240, Math.min(240, Number(target) || 0));
+    const error = boundedTarget - action.q;
+    const adaptiveRate = Math.max(0.025, Math.min(rate, rate / Math.sqrt(Math.max(1, action.visits) / 5)));
+    action.q = Math.max(-240, Math.min(240, action.q + error * adaptiveRate));
+    action.reward = action.reward * 0.9 + boundedTarget * 0.1;
+    if (boundedTarget > 8) action.successes++;
+    else if (boundedTarget < -8) action.failures++;
+    action.updatedAt = Date.now();
+    state.updatedAt = action.updatedAt;
+    memory.autonomy.updates++;
+    refreshAutonomyChampion(stateKey, state);
+    return Math.abs(error);
+  }
+
+  function addAutonomyReplay(sample) {
+    if (!sample?.state || !sample?.action) return;
+    memory.autonomy.replay.push({
+      state: String(sample.state).slice(0, 180),
+      action: String(sample.action).slice(0, 64),
+      reward: Math.max(-240, Math.min(240, Number(sample.reward) || 0)),
+      nextState: sample.nextState ? String(sample.nextState).slice(0, 180) : null,
+      terminal: Boolean(sample.terminal),
+      priority: Math.max(0.01, Math.min(480, Number(sample.priority) || 0.01)),
+      stage: Math.max(1, Math.floor(Number(sample.stage) || 1)),
+      updatedAt: Date.now(),
+    });
+    if (memory.autonomy.replay.length > AUTONOMY_REPLAY_LIMIT) {
+      memory.autonomy.replay.splice(0, memory.autonomy.replay.length - AUTONOMY_REPLAY_LIMIT);
+    }
+  }
+
+  function closeAutonomyTransition(previous, nextState = null, terminal = false) {
+    if (!previous?.state || !previous?.action) return;
+    const target = (Number(previous.reward) || 0)
+      + (terminal || !nextState ? 0 : AUTONOMY_GAMMA * maxAutonomyQ(nextState));
+    const priority = trainAutonomyValue(previous.state, previous.action, target);
+    addAutonomyReplay({
+      ...previous,
+      reward: Number(previous.reward) || 0,
+      nextState,
+      terminal,
+      priority,
+    });
+  }
+
+  function evaluateAutonomyActions(stateKey, actionKeys = [], meta = {}) {
+    const state = autonomyState(stateKey);
+    const unique = [...new Set(actionKeys.map((key) => String(key || "").slice(0, 64)).filter(Boolean))];
+    const biases = {};
+    for (const key of unique) {
+      const action = autonomyAction(state, key);
+      const confidence = action?.visits ? 1 - Math.exp(-action.visits / 9) : 0;
+      const championBonus = state?.champion === key ? 10 * confidence : 0;
+      biases[key] = Math.max(-28, Math.min(28, (action?.q || 0) * 0.18 * confidence + championBonus));
+    }
+    const run = normalizeRunContext(experience.currentMatch?.run || runtimeRunContext());
+    const visits = Math.max(0, Number(state?.visits) || 0);
+    const baseExploration = run.mode === "TEST" ? 0.14 : 0.055;
+    const explorationRate = Math.max(run.mode === "TEST" ? 0.035 : 0.012, baseExploration / Math.sqrt(1 + visits / 12));
+    const canExplore = meta?.safeToExplore !== false && !meta?.urgent && unique.length > 1;
+    const explore = canExplore && (meta?.forceExplore || Math.random() < explorationRate);
+    let exploreKey = null;
+    if (explore) {
+      exploreKey = unique
+        .filter((key) => key !== state?.champion)
+        .sort((a, b) => (state?.actions[a]?.visits || 0) - (state?.actions[b]?.visits || 0)
+          || (state?.actions[b]?.q || 0) - (state?.actions[a]?.q || 0))[0] || null;
+      if (exploreKey) biases[exploreKey] = Math.min(28, (biases[exploreKey] || 0) + 18);
+    }
+    return {
+      biases,
+      champion: state?.champion || null,
+      exploreKey,
+      explorationRate,
+      generation: memory.autonomy.generation,
+    };
+  }
+
+  function observeAutonomyDecision(sample = {}) {
+    const player = sample.player === "2P" ? "2P" : "1P";
+    const stateKey = String(sample.stateKey || "").slice(0, 180);
+    const actionKey = String(sample.actionKey || "").slice(0, 64);
+    if (!stateKey || !actionKey) return null;
+    const at = Math.max(0, Number(sample.time) || 0);
+    const previous = autonomyRuntime.pending[player];
+    if (previous && previous.state === stateKey && previous.action === actionKey && at - previous.time < 0.55) {
+      return evaluateAutonomyActions(stateKey, [actionKey], { safeToExplore: false });
+    }
+    if (previous) closeAutonomyTransition(previous, stateKey, false);
+    const state = autonomyState(stateKey);
+    const action = autonomyAction(state, actionKey);
+    state.visits++;
+    state.updatedAt = Date.now();
+    action.visits++;
+    action.updatedAt = state.updatedAt;
+    const transition = {
+      player,
+      state: stateKey,
+      action: actionKey,
+      reward: 0,
+      time: at,
+      stage: Math.max(1, Math.floor(Number(sample.stage) || 1)),
+      explored: Boolean(sample.explored),
+    };
+    autonomyRuntime.pending[player] = transition;
+    const trace = autonomyRuntime.traces[player] || [];
+    trace.push({ state: stateKey, action: actionKey, time: at, stage: transition.stage });
+    autonomyRuntime.traces[player] = trace.slice(-AUTONOMY_TRACE_LIMIT);
+    memory.autonomy.decisions++;
+    refreshAutonomyChampion(stateKey, state);
+    return { generation: memory.autonomy.generation, q: action.q, visits: action.visits, champion: state.champion };
+  }
+
+  function autonomyPlayer(detail = {}) {
+    if (detail.player === "1P" || detail.player === "2P") return detail.player;
+    const kind = detail.tank?.kind || detail.ally?.kind;
+    if (kind === "player2") return "2P";
+    if (kind === "player") return "1P";
+    return null;
+  }
+
+  function rewardAutonomyTrace(player, reward, terminal = false) {
+    const pending = autonomyRuntime.pending[player];
+    if (pending) pending.reward = Math.max(-240, Math.min(240, (Number(pending.reward) || 0) + reward));
+    const trace = autonomyRuntime.traces[player] || [];
+    const depth = terminal ? trace.length : Math.min(10, trace.length);
+    const decay = terminal ? 0.94 : 0.72;
+    for (let offset = 0; offset < depth; offset++) {
+      const item = trace[trace.length - 1 - offset];
+      const credit = reward * Math.pow(decay, offset);
+      const state = autonomyState(item.state, false);
+      const action = state?.actions?.[item.action];
+      if (!action) continue;
+      trainAutonomyValue(item.state, item.action, action.q + credit, terminal ? 0.08 : 0.1);
+    }
+  }
+
+  function rewardAutonomyEvent(type, detail = {}) {
+    const rewards = {
+      enemy_killed: 34,
+      freeze_collected: 20,
+      base_shield_counter: 26,
+      ally_death: -72,
+      ally_stuck: -26,
+      ai_route_loop: -22,
+      defense_route_stall: -28,
+      route_clear_failed: -22,
+      target_stale: -16,
+      enemy_cross_midline: -6,
+      base_hit: -220,
+    };
+    const reward = Number(rewards[type]);
+    if (!Number.isFinite(reward)) return;
+    const owner = autonomyPlayer(detail);
+    const global = type === "base_hit" || type === "enemy_cross_midline";
+    if (global || !owner) {
+      rewardAutonomyTrace("1P", reward);
+      rewardAutonomyTrace("2P", reward);
+    } else {
+      rewardAutonomyTrace(owner, reward);
+      if (type === "enemy_killed" || type === "base_shield_counter") {
+        rewardAutonomyTrace(owner === "1P" ? "2P" : "1P", reward * 0.15);
+      }
+    }
+  }
+
+  function runAutonomyReplay(limit = 96) {
+    const samples = memory.autonomy.replay.slice()
+      .sort((a, b) => b.priority - a.priority || b.updatedAt - a.updatedAt)
+      .slice(0, Math.max(0, Math.floor(limit)));
+    for (const sample of samples) {
+      const target = sample.reward + (sample.terminal || !sample.nextState
+        ? 0
+        : AUTONOMY_GAMMA * maxAutonomyQ(sample.nextState));
+      const priority = trainAutonomyValue(sample.state, sample.action, target, 0.07);
+      sample.priority = priority * 0.92;
+      memory.autonomy.replayUpdates++;
+    }
+  }
+
+  function pruneAutonomyStates() {
+    const entries = Object.entries(memory.autonomy.states);
+    if (entries.length <= AUTONOMY_STATE_LIMIT) return;
+    entries.sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+    for (const [key] of entries.slice(0, entries.length - AUTONOMY_STATE_LIMIT)) delete memory.autonomy.states[key];
+  }
+
+  function finishAutonomyEpisode(result = {}) {
+    const stage = Math.max(1, Math.floor(Number(result.stage) || 1));
+    const reward = result.win ? 110 + Math.min(70, stage * 4) : -180;
+    for (const player of ["1P", "2P"]) {
+      rewardAutonomyTrace(player, reward, true);
+      const pending = autonomyRuntime.pending[player];
+      if (pending) closeAutonomyTransition(pending, null, true);
+    }
+    runAutonomyReplay(result.win ? 72 : 112);
+    pruneAutonomyStates();
+    autonomyRuntime = normalizeAutonomyRuntime({});
+  }
+
   function updatePerformanceData(match, result) {
     if (!match) return null;
     const counters = match?.counters || {};
@@ -733,7 +1172,7 @@
         - count("friendly_fire") * 0.5),
       attack: clamp(count("enemy_killed") * 0.5 + (result.win ? 1 : 0)),
       clear: clamp(10 - count("ally_stuck") * 1.1 - count("route_clear_failed") * 2
-        - count("target_stale") * 0.6),
+        - count("target_stale") * 0.6 - count("ai_route_loop") * 0.7),
     };
     const previous = normalizeWeights(memory.weights);
     const smoothing = 0.1;
@@ -758,6 +1197,7 @@
     memory.lastScore = Math.round(resultScore);
     const scores = updatePerformanceData(match, result);
     tunePolicy(match, result, scores, stage, duration);
+    finishAutonomyEpisode({ ...result, stage });
     if (result.win) {
       const stageKey = String(stage);
       const previousBest = evolution.stageBest[stageKey];
@@ -818,6 +1258,7 @@
     memory = normalizeMemory(defaults);
     experience = normalizeExperience({});
     training = normalizeTraining({});
+    autonomyRuntime = normalizeAutonomyRuntime({});
     pendingEvents = [];
     pendingMatches = [];
     syncMemoryFileNow();
@@ -846,6 +1287,7 @@
       memory,
       experience,
       training,
+      autonomyRuntime,
       pendingEvents: pendingEvents.slice(),
       pendingMatches: pendingMatches.slice(),
       ownsCurrentMatch,
@@ -864,6 +1306,9 @@
     createController() { throw new Error("AI CORE controller is not loaded"); },
     readMemory: () => memory,
     readPolicy,
+    readAutonomy: () => memory.autonomy,
+    evaluateAutonomyActions,
+    observeAutonomyDecision,
     readExperience: () => experience,
     readExperienceDbStats,
     startMatch,

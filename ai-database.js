@@ -37,6 +37,135 @@ function addCount(target, key, value) {
   if (count) target[key] = (target[key] || 0) + count;
 }
 
+function mergeAutonomyAction(existing = null, incoming = null) {
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+  const existingAt = Math.max(0, Number(existing.updatedAt) || 0);
+  const incomingAt = Math.max(0, Number(incoming.updatedAt) || 0);
+  if (Math.abs(existingAt - incomingAt) > 15000) return incomingAt >= existingAt ? incoming : existing;
+  const existingVisits = Math.max(0, Number(existing.visits) || 0);
+  const incomingVisits = Math.max(0, Number(incoming.visits) || 0);
+  const totalWeight = Math.max(1, existingVisits + incomingVisits);
+  return {
+    ...existing,
+    ...incoming,
+    q: ((Number(existing.q) || 0) * existingVisits + (Number(incoming.q) || 0) * incomingVisits) / totalWeight,
+    reward: ((Number(existing.reward) || 0) * existingVisits + (Number(incoming.reward) || 0) * incomingVisits) / totalWeight,
+    visits: Math.max(existingVisits, incomingVisits),
+    successes: Math.max(0, Number(existing.successes) || 0, Number(incoming.successes) || 0),
+    failures: Math.max(0, Number(existing.failures) || 0, Number(incoming.failures) || 0),
+    updatedAt: Math.max(existingAt, incomingAt),
+  };
+}
+
+function mergeConcurrentAutonomy(existing = {}, incoming = {}) {
+  const existingStates = existing?.states && typeof existing.states === "object" ? existing.states : {};
+  const incomingStates = incoming?.states && typeof incoming.states === "object" ? incoming.states : {};
+  const states = {};
+  for (const key of new Set([...Object.keys(existingStates), ...Object.keys(incomingStates)])) {
+    const current = existingStates[key];
+    const next = incomingStates[key];
+    if (!current || !next) {
+      states[key] = next || current;
+      continue;
+    }
+    const actions = {};
+    const currentActions = current.actions && typeof current.actions === "object" ? current.actions : {};
+    const nextActions = next.actions && typeof next.actions === "object" ? next.actions : {};
+    for (const actionKey of new Set([...Object.keys(currentActions), ...Object.keys(nextActions)])) {
+      actions[actionKey] = mergeAutonomyAction(currentActions[actionKey], nextActions[actionKey]);
+    }
+    const currentAt = Math.max(0, Number(current.updatedAt) || 0);
+    const nextAt = Math.max(0, Number(next.updatedAt) || 0);
+    states[key] = {
+      ...(nextAt >= currentAt ? current : next),
+      ...(nextAt >= currentAt ? next : current),
+      visits: Math.max(0, Number(current.visits) || 0, Number(next.visits) || 0),
+      champion: nextAt >= currentAt ? next.champion || current.champion || null : current.champion || next.champion || null,
+      actions,
+      updatedAt: Math.max(currentAt, nextAt),
+    };
+  }
+  const replayByKey = new Map();
+  for (const sample of [...(Array.isArray(existing.replay) ? existing.replay : []), ...(Array.isArray(incoming.replay) ? incoming.replay : [])]) {
+    if (!sample?.state || !sample?.action) continue;
+    const key = `${sample.state}\u0000${sample.action}\u0000${Number(sample.updatedAt) || 0}\u0000${Number(sample.reward) || 0}`;
+    replayByKey.set(key, sample);
+  }
+  const currentDecisionAt = Math.max(0, Number(existing.lastDecision?.updatedAt) || 0);
+  const nextDecisionAt = Math.max(0, Number(incoming.lastDecision?.updatedAt) || 0);
+  const retainedStates = Object.fromEntries(Object.entries(states)
+    .sort((a, b) => {
+      const retention = (state) => (Number(state?.updatedAt) || 0) + Math.min(100, Number(state?.visits) || 0) * 300000;
+      return retention(b[1]) - retention(a[1]);
+    })
+    .slice(0, 1024));
+  return {
+    ...existing,
+    ...incoming,
+    version: Math.max(1, Number(existing.version) || 0, Number(incoming.version) || 0),
+    generation: Math.max(0, Number(existing.generation) || 0, Number(incoming.generation) || 0),
+    decisions: Math.max(0, Number(existing.decisions) || 0, Number(incoming.decisions) || 0),
+    updates: Math.max(0, Number(existing.updates) || 0, Number(incoming.updates) || 0),
+    replayUpdates: Math.max(0, Number(existing.replayUpdates) || 0, Number(incoming.replayUpdates) || 0),
+    promotions: Math.max(0, Number(existing.promotions) || 0, Number(incoming.promotions) || 0),
+    rollbacks: Math.max(0, Number(existing.rollbacks) || 0, Number(incoming.rollbacks) || 0),
+    states: retainedStates,
+    replay: [...replayByKey.values()].sort((a, b) => (Number(a.updatedAt) || 0) - (Number(b.updatedAt) || 0)).slice(-1600),
+    lastDecision: nextDecisionAt >= currentDecisionAt
+      ? incoming.lastDecision || existing.lastDecision || null
+      : existing.lastDecision || null,
+  };
+}
+
+function mergeConcurrentMemory(existing = {}, incoming = {}) {
+  const existingTuning = existing.policyTuning && typeof existing.policyTuning === "object"
+    ? existing.policyTuning : {};
+  const incomingTuning = incoming.policyTuning && typeof incoming.policyTuning === "object"
+    ? incoming.policyTuning : {};
+  const policyTuning = {};
+  const policyByContext = {
+    ...(existing.policyByContext && typeof existing.policyByContext === "object" ? existing.policyByContext : {}),
+  };
+  const incomingPolicies = incoming.policyByContext && typeof incoming.policyByContext === "object"
+    ? incoming.policyByContext : {};
+  const keys = new Set([...Object.keys(existingTuning), ...Object.keys(incomingTuning)]);
+  for (const key of keys) {
+    const current = existingTuning[key];
+    const next = incomingTuning[key];
+    const currentAt = Math.max(0, Number(current?.updatedAt) || 0);
+    const nextAt = Math.max(0, Number(next?.updatedAt) || 0);
+    const useIncoming = Boolean(next) && (!current || nextAt >= currentAt);
+    policyTuning[key] = useIncoming ? next : current;
+    if (useIncoming && incomingPolicies[key]) policyByContext[key] = incomingPolicies[key];
+  }
+  for (const [key, policy] of Object.entries(incomingPolicies)) {
+    if (!Object.prototype.hasOwnProperty.call(policyTuning, key)) policyByContext[key] = policy;
+  }
+  const currentDecisionAt = Math.max(0, Number(existing.lastPolicyDecision?.updatedAt) || 0);
+  const nextDecisionAt = Math.max(0, Number(incoming.lastPolicyDecision?.updatedAt) || 0);
+  return {
+    ...existing,
+    ...incoming,
+    policyByContext,
+    policyTuning,
+    autonomy: mergeConcurrentAutonomy(existing.autonomy, incoming.autonomy),
+    lastPolicyDecision: nextDecisionAt >= currentDecisionAt
+      ? incoming.lastPolicyDecision || existing.lastPolicyDecision || null
+      : existing.lastPolicyDecision || null,
+  };
+}
+
+function mergeConcurrentTraining(existing = {}, incoming = {}, canonicalGames = 0) {
+  return {
+    ...existing,
+    ...incoming,
+    seconds: Math.max(0, Number(existing.seconds) || 0, Number(incoming.seconds) || 0),
+    games: Math.max(0, Number(canonicalGames) || 0),
+    generation: Math.max(0, Math.floor(Number(existing.generation) || 0), Math.floor(Number(incoming.generation) || 0)),
+  };
+}
+
 class AiDatabase {
   constructor(file) {
     this.file = file;
@@ -303,8 +432,15 @@ class AiDatabase {
     const experience = data?.experience || null;
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      if (data?.memory !== undefined) this.setState("memory", { ...data.memory, games: this.canonicalGames() }, now);
-      if (data?.training !== undefined) this.setState("training", { ...data.training, games: this.canonicalGames() }, now);
+      if (data?.memory !== undefined) {
+        const currentMemory = this.getState("memory", {});
+        const mergedMemory = mergeConcurrentMemory(currentMemory, data.memory);
+        this.setState("memory", { ...mergedMemory, games: this.canonicalGames() }, now);
+      }
+      if (data?.training !== undefined) {
+        const currentTraining = this.getState("training", {});
+        this.setState("training", mergeConcurrentTraining(currentTraining, data.training, this.canonicalGames()), now);
+      }
       let completed = 0;
       if (experience) {
         this.setState("experience_meta", {
@@ -557,4 +693,4 @@ class AiDatabase {
   }
 }
 
-module.exports = { AiDatabase };
+module.exports = { AiDatabase, mergeConcurrentMemory, mergeConcurrentTraining, mergeConcurrentAutonomy };
