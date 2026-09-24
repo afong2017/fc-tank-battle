@@ -61,6 +61,14 @@
     ? Promise.resolve(previous.syncMemoryFileNow?.()).catch((error) => console.warn("Legacy AI memory sync failed", error))
     : Promise.resolve();
   let disposed = false;
+  let pendingRelease = null;
+  let activeRelease = handoff?.activeRelease || null;
+  let matchPolicy = handoff?.matchPolicy || null;
+  let releaseRequest = null;
+  let releaseStatus = "BASELINE";
+  let releaseResetPending = false;
+  let pendingPolicyOutcomes = Array.isArray(handoff?.pendingPolicyOutcomes) ? handoff.pendingPolicyOutcomes.slice() : [];
+  let outcomeRequest = null;
   let syncTimer = null;
   let retryTimer = null;
   let syncRequest = null;
@@ -600,6 +608,13 @@
   }
 
   function startMatch(meta = {}) {
+    if (releaseResetPending) { activeRelease = null; releaseResetPending = false; }
+    if (releaseCompatible(pendingRelease)) activeRelease = pendingRelease;
+    else if (!releaseCompatible(activeRelease)) activeRelease = null;
+    const stage = Math.max(1, Math.min(35, Number(meta.stage) || 1));
+    matchPolicy = Object.freeze(normalizePolicy(activeRelease?.snapshot?.stages?.[stage]
+      || memory.policyByContext?.[policyContextKey(stage, meta.run)] || memory.policy));
+    refreshPolicyRelease();
     autonomyRuntime = normalizeAutonomyRuntime({});
     experience.currentMatch = {
       id: `${sessionId}-${Date.now()}-${experience.games + 1}`,
@@ -661,6 +676,10 @@
     };
     match.events++;
     match.counters[type] = (match.counters[type] || 0) + 1;
+    if ((type === "base_hit" && String(detail.baseSource || detail.reason || "").startsWith("ally:"))
+      || (type === "ally_death" && detail.reason === "friendly_fire")) {
+      match.counters.policy_unsafe = (match.counters.policy_unsafe || 0) + 1;
+    }
     experience.counters[type] = (experience.counters[type] || 0) + 1;
     rewardAutonomyEvent(type, detail);
     if (type === "enemy_killed" && detail.crossWater) {
@@ -711,6 +730,7 @@
   }
 
   function readPolicy(stage = 1, run = runtimeRunContext()) {
+    if (normalizeRunContext(run).mode === "NORMAL" && matchPolicy) return { ...matchPolicy };
     const key = policyContextKey(stage, run);
     return normalizePolicy(memory.policyByContext?.[key] || memory.policy);
   }
@@ -815,6 +835,7 @@
 
   function tunePolicy(match, result, scores, stage, duration) {
     if (!match || !scores) return;
+    if (normalizeRunContext(result.run || match.run).mode !== "TEST") return;
     const key = policyContextKey(stage, result.run || match.run);
     const activePolicy = readPolicy(stage, result.run || match.run);
     const state = memory.policyTuning[key] || {
@@ -934,12 +955,9 @@
       && autonomyConservativeScore(challenger) < autonomyConservativeScore(current) + 3) return;
     if (currentKey === challengerKey) return;
     state.champion = challengerKey;
-    memory.autonomy.generation++;
-    const rolledBack = Boolean(current && current.q < 0 && challenger.q >= current.q);
-    if (rolledBack) memory.autonomy.rollbacks++;
-    else memory.autonomy.promotions++;
+    // Local rewards nominate a candidate; they are not release evidence.
     memory.autonomy.lastDecision = {
-      status: rolledBack ? "ROLLED_BACK" : "PROMOTED",
+      status: "CANDIDATE_ONLY",
       state: stateKey,
       previous: currentKey || null,
       champion: challengerKey,
@@ -1008,6 +1026,11 @@
   function evaluateAutonomyActions(stateKey, actionKeys = [], meta = {}) {
     const state = autonomyState(stateKey);
     const unique = [...new Set(actionKeys.map((key) => String(key || "").slice(0, 64)).filter(Boolean))];
+    const run = normalizeRunContext(experience.currentMatch?.run || runtimeRunContext());
+    if (run.mode !== "TEST") {
+      return window.TankPartnerAIEngine.evaluatePolicySnapshot(activeRelease?.snapshot, stateKey, unique,
+        activeRelease?.generation || 0);
+    }
     const biases = {};
     for (const key of unique) {
       const action = autonomyAction(state, key);
@@ -1015,7 +1038,6 @@
       const championBonus = state?.champion === key ? 10 * confidence : 0;
       biases[key] = Math.max(-28, Math.min(28, (action?.q || 0) * 0.18 * confidence + championBonus));
     }
-    const run = normalizeRunContext(experience.currentMatch?.run || runtimeRunContext());
     const visits = Math.max(0, Number(state?.visits) || 0);
     const baseExploration = run.mode === "TEST" ? 0.14 : 0.055;
     const explorationRate = Math.max(run.mode === "TEST" ? 0.035 : 0.012, baseExploration / Math.sqrt(1 + visits / 12));
@@ -1185,6 +1207,7 @@
 
   function finishMatch(result = {}) {
     const match = experience.currentMatch;
+    const outcomeRelease = activeRelease;
     const stage = Math.max(1, Math.floor(Number(result.stage) || match?.stage || 1));
     const duration = Math.max(0, Number(result.duration) || 0);
     const evolution = normalizeEvolution(memory.evolution);
@@ -1242,6 +1265,53 @@
     experience.currentMatch = null;
     ownsCurrentMatch = false;
     syncMemoryFileNow();
+    if (serverMode() && outcomeRelease && match?.id && normalizeRunContext(result.run || match.run).mode === "NORMAL") {
+      const unsafe = Math.max(0, Number(match.counters?.policy_unsafe) || 0);
+      pendingPolicyOutcomes.push({ releaseId: outcomeRelease.id, matchId: match.id,
+          stage: Math.max(1, Math.min(35, Number(match.stage) || 1)), runMode: "NORMAL",
+          result: result.win ? "win" : "lose", unsafe });
+      flushPolicyOutcomes();
+    }
+    refreshPolicyRelease();
+  }
+
+  function releaseCompatible(release) {
+    const version = window.FCHotUpgradeVersion;
+    return Boolean(release && release.bindings?.engineBundleHash === version?.ai?.hash
+      && release.bindings?.gameBundleHash === version?.game?.hash);
+  }
+
+  function flushPolicyOutcomes() {
+    if (!serverMode() || outcomeRequest || !pendingPolicyOutcomes.length) return outcomeRequest;
+    const sample = pendingPolicyOutcomes[0];
+    outcomeRequest = fetch("/ai-policy/outcome", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sample) }).then(response => {
+      if (!response.ok) throw new Error("Policy outcome not acknowledged");
+      if (pendingPolicyOutcomes[0] === sample) pendingPolicyOutcomes.shift();
+    }).catch(() => {}).finally(() => { outcomeRequest = null; });
+    return outcomeRequest;
+  }
+
+  function refreshPolicyRelease() {
+    if (!serverMode() || releaseRequest) return releaseRequest;
+    releaseRequest = fetch("/ai-policy", { cache: "no-store" }).then(response => {
+      if (!response.ok) throw new Error("Release unavailable");
+      return response.json();
+    }).then(payload => {
+      if (disposed) return;
+      if (payload.status !== "ACTIVE" || !payload.release) {
+        pendingRelease = null;
+        releaseResetPending = true;
+        releaseStatus = payload.status || "BASELINE";
+        return;
+      }
+      const snapshot = window.TankPartnerAIEngine.validatePolicySnapshot(payload.release.snapshot);
+      pendingRelease = { ...payload.release, snapshot };
+      releaseResetPending = false;
+      releaseStatus = releaseCompatible(pendingRelease) ? "READY_NEXT_MATCH" : "WAITING_FOR_CODE";
+    }).catch(() => { releaseStatus = "OFFLINE"; })
+      .finally(() => { releaseRequest = null; });
+    return releaseRequest;
   }
 
   function readExperienceDbStats() {
@@ -1293,10 +1363,14 @@
       ownsCurrentMatch,
       sessionId,
       inFlight: syncRequest,
+      activeRelease,
+      matchPolicy,
+      pendingPolicyOutcomes: pendingPolicyOutcomes.slice(),
     };
   }
 
   const heartbeatTimer = setInterval(() => {
+    flushPolicyOutcomes();
     if (!ownsCurrentMatch || !experience.currentMatch || disposed) return;
     experience.currentMatch.lastActiveAt = Date.now();
     syncMemoryFileNow();
@@ -1306,6 +1380,10 @@
     createController() { throw new Error("AI CORE controller is not loaded"); },
     readMemory: () => memory,
     readPolicy,
+    refreshPolicyRelease,
+    readPolicyRelease: () => ({ status: releaseStatus, activeId: activeRelease?.id || null,
+      generation: activeRelease?.generation || 0, pendingId: pendingRelease?.id || null,
+      pendingOutcomes: pendingPolicyOutcomes.length }),
     readAutonomy: () => memory.autonomy,
     evaluateAutonomyActions,
     observeAutonomyDecision,
@@ -1337,4 +1415,5 @@
       : restoreMemoryFile(),
   };
   window.TankPartnerAI = window.TankPartnerAIEngine?.enhance?.(services) || services;
+  services.ready.then(() => refreshPolicyRelease());
 })();

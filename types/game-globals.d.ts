@@ -98,6 +98,9 @@ interface TankPartnerAI {
     ownsCurrentMatch: boolean;
     sessionId: string;
     inFlight: Promise<void> | null;
+    activeRelease?: any;
+    matchPolicy?: any;
+    pendingPolicyOutcomes?: any[];
   };
   readonly sessionId: string;
   dispose?(): void;
@@ -125,7 +128,12 @@ interface FCHotUpgrade {
 
 interface Window {
   TankPartnerAI?: TankPartnerAI;
-  TankPartnerAIEngine?: { version: string; enhance(api: TankPartnerAI): TankPartnerAI };
+  TankPartnerAIEngine?: {
+    version: string;
+    enhance(api: TankPartnerAI): TankPartnerAI;
+    validatePolicySnapshot(value: any): any;
+    evaluatePolicySnapshot(snapshot: any, state: string, keys: string[], generation?: number): any;
+  };
   FCGameHotAPI?: FCGameHotAPI;
   FCHotUpgrade?: FCHotUpgrade;
   FCHotUpgradeVersion?: { ai?: Record<string, unknown>; game?: Record<string, unknown> };

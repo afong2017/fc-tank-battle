@@ -909,43 +909,86 @@ let menuField = 0;
 let stageNumberBuffer = "";
 let stageNumberClock = 0;
 
+let soundOutput = null;
+let soundVoices = 0;
+const soundLastPlayed = new Map();
+
 function newAudio() {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   audio = audio || new AudioContext();
+  if (!soundOutput) {
+    const filter = audio.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 2400;
+    filter.Q.value = 0.55;
+    const compressor = audio.createDynamicsCompressor();
+    compressor.threshold.value = -20;
+    compressor.knee.value = 16;
+    compressor.ratio.value = 5;
+    compressor.attack.value = 0.004;
+    compressor.release.value = 0.12;
+    const master = audio.createGain();
+    master.gain.value = 0.65;
+    filter.connect(compressor).connect(master).connect(audio.destination);
+    soundOutput = filter;
+  }
   return audio;
 }
 
-function tone(freq, duration, type = "square", gain = 0.08, slide = 1) {
-  if (!audio || INTERNAL_TEST_MUTED) return;
+function tone(freq, duration, type = "triangle", gain = 0.08, slide = 1, delay = 0) {
+  if (!audio || !soundOutput || INTERNAL_TEST_MUTED || audio.state !== "running" || soundVoices >= 16) return;
   const osc = audio.createOscillator();
   const amp = audio.createGain();
-  const now = audio.currentTime;
+  const now = audio.currentTime + delay;
   osc.type = type;
   osc.frequency.setValueAtTime(freq, now);
   osc.frequency.exponentialRampToValueAtTime(Math.max(40, freq * slide), now + duration);
-  amp.gain.setValueAtTime(gain, now);
+  amp.gain.setValueAtTime(0.001, now);
+  amp.gain.linearRampToValueAtTime(gain, now + 0.006);
   amp.gain.exponentialRampToValueAtTime(0.001, now + duration);
-  osc.connect(amp).connect(audio.destination);
+  osc.connect(amp).connect(soundOutput);
+  soundVoices++;
+  osc.onended = () => {
+    osc.disconnect();
+    amp.disconnect();
+    soundVoices = Math.max(0, soundVoices - 1);
+  };
   osc.start(now);
   osc.stop(now + duration);
 }
 
+function allowSound(kind, interval) {
+  if (!audio || INTERNAL_TEST_MUTED || audio.state !== "running") return false;
+  const now = audio.currentTime;
+  if (now - (soundLastPlayed.get(kind) ?? -Infinity) < interval) return false;
+  soundLastPlayed.set(kind, now);
+  return true;
+}
+
 const sfx = {
-  fire: () => tone(760, 0.06, "square", 0.06, 0.55),
-  hit: () => tone(120, 0.12, "sawtooth", 0.09, 0.6),
+  fire: () => {
+    if (allowSound("fire", 0.065)) tone(460, 0.065, "triangle", 0.09, 0.42);
+  },
+  hit: () => {
+    if (allowSound("hit", 0.085)) tone(180, 0.09, "triangle", 0.10, 0.55);
+  },
   boom: () => {
-    tone(80, 0.18, "sawtooth", 0.1, 0.45);
-    setTimeout(() => tone(48, 0.14, "square", 0.08, 0.7), 55);
+    if (!allowSound("boom", 0.1)) return;
+    tone(125, 0.22, "triangle", 0.16, 0.38);
+    tone(210, 0.085, "square", 0.025, 0.35);
   },
   start: () => {
-    tone(440, 0.08, "square", 0.06, 1.4);
-    setTimeout(() => tone(660, 0.1, "square", 0.06, 1.2), 90);
+    if (!allowSound("start", 0.4)) return;
+    tone(392, 0.11, "triangle", 0.10);
+    tone(523, 0.11, "triangle", 0.09, 1, 0.12);
+    tone(659, 0.18, "triangle", 0.08, 1, 0.24);
   },
   power: () => {
-    tone(523, 0.055, "square", 0.055, 1.06);
-    setTimeout(() => tone(784, 0.055, "square", 0.055, 1.06), 58);
-    setTimeout(() => tone(1047, 0.09, "square", 0.05, 0.92), 116);
-    setTimeout(() => tone(1568, 0.035, "square", 0.025, 0.88), 168);
+    if (!allowSound("power", 0.28)) return;
+    tone(523, 0.085, "triangle", 0.11);
+    tone(659, 0.085, "triangle", 0.10, 1, 0.085);
+    tone(784, 0.085, "triangle", 0.09, 1, 0.17);
+    tone(1047, 0.15, "triangle", 0.065, 1, 0.255);
   },
 };
 

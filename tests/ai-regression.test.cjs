@@ -128,6 +128,147 @@ test("a newly appeared freeze pickup immediately invalidates a cached analysis",
   assert.equal(second.pickupDuty?.bonus, bonus);
 });
 
+test("global assignments refresh on ally death and respawn without waiting for the timer", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 8, 18);
+  const p2 = tank("player2", 18, 18);
+  const ctx = context(p1, [p2], [], openMap());
+  const first = engine.previewGlobalBattle(ctx, 10);
+  assert.equal(engine.previewGlobalBattle(ctx, 10.01), first);
+  p2.alive = false;
+  const dead = engine.previewGlobalBattle(ctx, 10.02);
+  assert.notEqual(dead, first);
+  assert.equal(dead.assignments.has(p2), false);
+  const replacement = tank("player2", 18, 22);
+  ctx.friends = [replacement];
+  const respawn = engine.previewGlobalBattle(ctx, 10.03);
+  assert.notEqual(respawn, dead);
+  assert.equal(respawn.assignments.has(replacement), true);
+});
+
+test("new visible enemies invalidate global analysis but array replacement does not", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 8, 18);
+  const ctx = context(p1, [], [], openMap());
+  const first = engine.previewGlobalBattle(ctx, 10);
+  const intruder = enemy(8, 16);
+  ctx.enemies = [intruder];
+  const second = engine.previewGlobalBattle(ctx, 10.01);
+  assert.notEqual(second, first);
+  assert.equal(second.assignments.get(p1).target, intruder);
+  ctx.enemies = [...ctx.enemies];
+  assert.equal(engine.previewGlobalBattle(ctx, 10.02), second);
+  const reset = engine.previewGlobalBattle(ctx, 0);
+  assert.notEqual(reset, second, "a restored simulation clock cannot reuse a future assignment");
+  assert.equal(reset.analyzedAt, 0);
+});
+
+test("kill estimates distinguish remaining armor health and frozen versus moving targets", () => {
+  const engine = loadEngine();
+  const ally = tank("player", 8, 10);
+  ally.fireDelay = 0.42;
+  const basic = enemy(8, 5);
+  const fast = enemy(8, 5, "fast");
+  const armor = enemy(8, 5, "armor");
+  armor.hp = 2;
+  const eta = (target, freeze = 0) => engine.previewLethalShotEta(ally, target, 0, 310, freeze);
+  assert.equal(eta(basic), 1);
+  assert.equal(eta(fast), 1);
+  assert.equal(eta(armor), 1.72);
+  assert.equal(eta(armor, 2), 1.42);
+  assert.equal(eta(armor, 0.5), 1.72);
+  armor.hp = 1;
+  assert.equal(eta(armor), 1);
+  armor.hp = 4;
+  assert.equal(eta(armor, 5), 2.26);
+});
+
+test("nearby freeze routes cross side boundaries without crossing protected bricks", () => {
+  const engine = loadEngine();
+  const ally = tank("player", 11, 10);
+  const bonus = { x: 13 * TILE + 2, y: 10 * TILE + 2, w: 28, h: 28, type: "freeze" };
+  const ctx = context(ally, [], [], openMap(), [bonus]);
+  ctx.aiSideRole = "LEFT";
+  const path = engine.previewFreezePath(ctx, ally, bonus);
+  assert.equal(path.length, 3);
+  assert.equal(path[path.length - 1].x, 13);
+  ctx.map[10][12] = "S";
+  ctx.mapVersion++;
+  const detour = engine.previewFreezePath(ctx, ally, bonus);
+  assert.ok(detour.length > 3);
+  assert.ok(detour.every(cell => !(cell.x === 12 && cell.y === 10)));
+});
+
+test("a blocked firing position relocates instead of declaring the current cell reached", () => {
+  const engine = loadEngine();
+  const ally = tank("player", 8, 10);
+  const map = openMap();
+  map[10][9] = "S";
+  const ctx = context(ally, [], [enemy(10, 10)], map);
+  const goals = [{ x: 8, y: 10 }, { x: 10, y: 10 }];
+  const route = engine.previewRelocationPath(ctx, goals);
+  assert.ok(route.length > 3);
+  assert.equal(route[route.length - 1].x, 10);
+  assert.ok(route.every(cell => !(cell.x === 9 && cell.y === 10)));
+  assert.equal(engine.previewRelocationPath(ctx, [goals[0]]).length, 0);
+  for (const [x, y] of [[7, 10], [8, 9], [8, 11]]) map[y][x] = "S";
+  assert.equal(engine.previewRelocationPath(ctx, goals).length, 0);
+});
+
+test("unseen layouts expose side and lower base entrances when the upper route is closed", () => {
+  const engine = loadEngine();
+  for (const [cols, rows, gx, gy] of [[26, 24, 11, 15], [18, 20, 3, 8], [30, 28, 19, 10]]) {
+    const map = Array.from({ length: rows }, () => Array(cols).fill("."));
+    const ctx = context(tank("player", 2, 2), [], [], map);
+    ctx.cols = cols; ctx.rows = rows;
+    ctx.baseGuard = { x: gx * TILE, y: gy * TILE, w: 4 * TILE, h: 3 * TILE };
+    ctx.base = { x: (gx + 1) * TILE, y: (gy + 1) * TILE, w: TILE, h: TILE };
+    for (let x = gx - 1; x <= gx + 4; x++) map[gy - 1][x] = "S";
+    const goals = engine.previewMapEntryGoals(ctx);
+    assert.ok(goals.some(g => g.x === gx - 1 && g.y === gy));
+    assert.ok(goals.some(g => g.x === gx + 4 && g.y === gy));
+    assert.ok(goals.some(g => g.y === gy + 3));
+    assert.ok(goals.every(g => map[g.y][g.x] !== "S"));
+  }
+});
+
+test("terrain learning keys transfer across stage numbers and react to cleared obstacles", () => {
+  const engine = loadEngine();
+  const ctx = context(tank("player", 8, 10), [], [], openMap());
+  const open = engine.previewTerrainKey(ctx);
+  ctx.stage = 35;
+  assert.equal(engine.previewTerrainKey(ctx), open);
+  ctx.map[10][9] = "S";
+  const wall = engine.previewTerrainKey(ctx);
+  assert.notEqual(wall, open);
+  ctx.map[10][9] = "W";
+  assert.notEqual(engine.previewTerrainKey(ctx), wall);
+  ctx.map[10][9] = ".";
+  assert.equal(engine.previewTerrainKey(ctx), open);
+});
+
+test("route following finishes tight corners without centering open turns", () => {
+  const engine = loadEngine();
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const ally = tank("player", 10, 10);
+    const ctx = context(ally, [], [], openMap());
+    const route = [{ x: 10 - dx, y: 10 - dy }, { x: 10, y: 10 },
+      { x: 10 + dy, y: 10 + dx }];
+    ally.x -= dx * 10;
+    ally.y -= dy * 10;
+    assert.equal(engine.previewRejoinPath(ctx, route).length, 2, "open turns stay free");
+    ctx.map[10 - dy + dx][10 - dx + dy] = "S";
+    const early = engine.previewRejoinPath(ctx, route);
+    assert.equal(early.length, 3, `${dx},${dy}: retain unfinished leg`);
+    ally.x += dx * 10;
+    ally.y += dy * 10;
+    assert.equal(engine.previewRejoinPath(ctx, route).length, 2);
+    ally.x += dx * 3;
+    ally.y += dy * 3;
+    assert.equal(engine.previewRejoinPath(ctx, route).length, 2, "never reverse after passing the waypoint");
+  }
+});
+
 test("visible simulation preserves elapsed time at 20 FPS without changing physics steps", () => {
   const source = fs.readFileSync(path.join(ROOT, "game.js"), "utf8");
   const start = source.indexOf("function simulationFrameElapsed(");
@@ -157,6 +298,237 @@ test("final defense arbitration does not reuse a cached search posture", () => {
   const block = source.slice(start, source.indexOf("const proposals", start));
   assert.match(block, /const posture = advisorDefensePosture\(ctx, tank\)/);
   assert.doesNotMatch(block, /tacticalAdvisorPostures\.get/);
+});
+
+test("joint defense keeps the versatile ally available for the second deadline", () => {
+  const engine = loadEngine();
+  const result = engine.previewDefenseCoverage([
+    [{ eta: 1, cost: 100 }, { eta: 2, cost: 200 }],
+    [{ eta: 2, cost: 200 }, { eta: 8, cost: 800 }],
+  ], [3, 3]);
+  assert.deepEqual(Array.from(result.owners), [1, 0]);
+  assert.equal(result.score[0], 0);
+});
+
+test("joint defense prioritizes reachable deadlines over a cheaper late pair", () => {
+  const engine = loadEngine();
+  const result = engine.previewDefenseCoverage([
+    [{ eta: 1, cost: -10000 }, { eta: 2, cost: 50 }],
+    [{ eta: 2, cost: 50 }, { eta: Infinity, cost: -10000 }],
+  ], [3, 3]);
+  assert.deepEqual(Array.from(result.owners), [1, 0]);
+});
+
+test("joint defense handles a lone defender and unreachable routes deterministically", () => {
+  const engine = loadEngine();
+  const result = engine.previewDefenseCoverage([[{ eta: Infinity, cost: 250000 }]], [2]);
+  assert.deepEqual(Array.from(result.owners), [0]);
+  assert.equal(result.score[0], 1);
+  assert.equal(engine.previewDefenseCoverage([], []).owners.length, 0);
+});
+
+test("shot feedback never treats an unfired command as a miss", () => {
+  const api = loadEngine();
+  const tracker = api.createShotFeedbackTracker();
+  const defender = tank("player", 8, 16);
+  const foe = enemy(8, 10);
+  const ctx = context(defender, [], [foe], openMap());
+  tracker.observe(ctx);
+  tracker.expect(ctx, { fire: true, dir: "up", target: foe });
+  ctx.gameTime = 4;
+  assert.equal(tracker.observe(ctx).length, 0);
+});
+
+test("shot feedback observes real projectiles once and waits for travel time", () => {
+  const tracker = loadEngine().createShotFeedbackTracker();
+  const defender = tank("player", 8, 16);
+  const foe = enemy(8, 10);
+  const ctx = context(defender, [], [foe], openMap());
+  tracker.observe(ctx);
+  tracker.expect(ctx, { fire: true, dir: "up", target: foe });
+  ctx.gameTime += 0.016;
+  ctx.bullets.push({ owner: defender, x: defender.x + 11, y: defender.y - 3, w: 6, h: 6, dir: "up", speed: 310 });
+  const launched = tracker.observe(ctx);
+  assert.equal(launched.length, 1);
+  assert.equal(launched[0].outcome, "launched");
+  assert.equal(tracker.observe(ctx).length, 0);
+  ctx.gameTime = launched[0].verifyAt - 0.01;
+  assert.equal(tracker.observe(ctx).length, 0);
+  ctx.gameTime += 0.02;
+  assert.equal(tracker.observe(ctx)[0].outcome, "miss");
+  assert.equal(tracker.observe(ctx).length, 0);
+});
+
+test("shot feedback distinguishes target movement and damage and ignores teammate shells", () => {
+  for (const outcome of ["target-moved", "target-damaged"]) {
+    const tracker = loadEngine().createShotFeedbackTracker();
+    const defender = tank("player", 8, 16);
+    const friend = tank("player2", 9, 16);
+    const foe = enemy(8, 10, "armor");
+    foe.hp = 2;
+    const ctx = context(defender, [friend], [foe], openMap());
+    tracker.observe(ctx);
+    tracker.expect(ctx, { fire: true, dir: "up", target: foe });
+    ctx.bullets.push({ owner: friend, dir: "up", x: 260, y: 480, w: 6, h: 6 });
+    assert.equal(tracker.observe(ctx).length, 0);
+    ctx.bullets.push({ owner: defender, dir: "up", x: 260, y: 480, w: 6, h: 6 });
+    const launched = tracker.observe(ctx)[0];
+    if (outcome === "target-damaged") foe.hp--;
+    else foe.x += 16;
+    ctx.gameTime = launched.verifyAt + 0.01;
+    assert.equal(tracker.observe(ctx)[0].outcome, outcome);
+  }
+});
+
+test("shot feedback resets on stage replacement and excludes clearing shots", () => {
+  const tracker = loadEngine().createShotFeedbackTracker();
+  const defender = tank("player", 8, 16);
+  const foe = enemy(8, 10);
+  const ctx = context(defender, [], [foe], openMap());
+  tracker.observe(ctx);
+  tracker.expect(ctx, { fire: true, dir: "up", target: foe, mode: "core-route-clear" });
+  ctx.bullets.push({ owner: defender, dir: "up", x: 260, y: 480, w: 6, h: 6 });
+  assert.equal(tracker.observe(ctx).length, 0);
+  tracker.expect(ctx, { fire: true, dir: "up", target: foe });
+  ctx.map = openMap();
+  ctx.gameTime = 0;
+  assert.equal(tracker.observe(ctx).length, 0);
+});
+
+test("seeded two-defender scenarios maximize deadline coverage", () => {
+  const engine = loadEngine();
+  let seed = 39127;
+  const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+  for (let i = 0; i < 200; i++) {
+    const matrix = Array.from({ length: 2 }, () => Array.from({ length: 2 }, () => ({ eta: random() * 12, cost: random() * 10000 })));
+    const deadlines = [random() * 8, random() * 8];
+    const expected = Math.min(
+      Number(matrix[0][0].eta > deadlines[0]) + Number(matrix[1][1].eta > deadlines[1]),
+      Number(matrix[1][0].eta > deadlines[0]) + Number(matrix[0][1].eta > deadlines[1]),
+    );
+    const result = engine.previewDefenseCoverage(matrix, deadlines);
+    assert.equal(result.score[0], expected);
+    assert.notEqual(result.owners[0], result.owners[1]);
+  }
+});
+
+test("bullet forecast accounts for stopping at a steel wall", () => {
+  const engine = loadEngine();
+  const p = tank("player", 8, 10, "right");
+  const ctx = context(p, [], [], openMap());
+  ctx.map[10][9] = "S";
+  ctx.bullets = [{ x: p.x + 11, y: p.y - 120, w: 6, h: 6, dir: "down", enemy: true, speed: 230 }];
+  assert.ok(engine.previewMovementBulletThreat(ctx, "right", 0.8));
+  ctx.map[10][9] = ".";
+  assert.equal(engine.previewMovementBulletThreat(ctx, "right", 0.8), null);
+});
+
+test("continuous bullet forecast catches immediate close contact", () => {
+  const engine = loadEngine();
+  const p = tank("player", 8, 10, "right");
+  const ctx = context(p, [], [], openMap());
+  ctx.bullets = [{ x: p.x + 11, y: p.y - 5, w: 6, h: 6, dir: "down", enemy: true, speed: 230 }];
+  const threat = engine.previewMovementBulletThreat(ctx, "right", 0.8);
+  assert.ok(threat && threat.eta < 0.06);
+});
+
+test("movement forecast includes teammate shells but never the tank's own shells", () => {
+  const engine = loadEngine();
+  const p = tank("player", 8, 10, "right");
+  const ally = tank("player2", 9, 5, "down");
+  const ctx = context(p, [ally], [], openMap());
+  const bullet = { x: p.x + 50, y: p.y - 120, w: 6, h: 6,
+    dir: "down", enemy: false, owner: ally, speed: 310 };
+  ctx.bullets = [bullet];
+  assert.ok(engine.previewMovementBulletThreat(ctx, "right", 0.8));
+  bullet.owner = p;
+  assert.equal(engine.previewMovementBulletThreat(ctx, "right", 0.8), null);
+  bullet.owner = ally;
+  ally.alive = false;
+  assert.ok(engine.previewMovementBulletThreat(ctx, "right", 0.8),
+    "a fired shell survives its owner's destruction");
+  bullet.dead = true;
+  assert.equal(engine.previewMovementBulletThreat(ctx, "right", 0.8), null);
+});
+
+test("ready ally fire announcements warn about crossing paths before launch", () => {
+  const engine = loadEngine();
+  const p = tank("player", 8, 10, "right");
+  const ally = tank("player2", 9, 5, "down");
+  const ctx = context(p, [ally], [], openMap());
+  const report = { x: p.x + 50, y: p.y - 120, w: 6, h: 6,
+    dir: "down", owner: ally, speed: 310, phase: "aim", ttl: 0.32 };
+  ctx.allyFireReports = [report];
+  assert.ok(engine.previewMovementBulletThreat(ctx, "right", 0.8));
+  ally.cooldown = 0.2;
+  assert.equal(engine.previewMovementBulletThreat(ctx, "right", 0.8), null);
+  ally.cooldown = 0;
+  report.ttl = 0;
+  assert.equal(engine.previewMovementBulletThreat(ctx, "right", 0.8), null);
+  report.ttl = 0.3;
+  report.phase = "fire";
+  assert.equal(engine.previewMovementBulletThreat(ctx, "right", 0.8), null,
+    "an old launch report cannot create a second shell at the muzzle");
+});
+
+test("shared projectile forecast chooses the earliest enemy or teammate collision", () => {
+  const engine = loadEngine();
+  const p = tank("player", 8, 10, "right");
+  const ally = tank("player2", 9, 5, "down");
+  const ctx = context(p, [ally], [], openMap());
+  const friendly = { x: p.x + 50, y: p.y - 120, w: 6, h: 6,
+    dir: "down", enemy: false, owner: ally, speed: 310 };
+  const hostile = { x: p.x + 11, y: p.y - 5, w: 6, h: 6,
+    dir: "down", enemy: true, speed: 230 };
+  ctx.bullets = [friendly, hostile];
+  assert.equal(engine.previewMovementBulletThreat(ctx, "right", 0.8).bullet, hostile);
+  ctx.bullets = [friendly];
+  assert.equal(engine.previewMovementBulletThreat(ctx, "right", 0.8).bullet, friendly);
+});
+
+test("open return corridors avoid centering turns but steel corners still require alignment", () => {
+  const engine = loadEngine();
+  const p = tank("player", 8, 10, "down");
+  p.x += 8;
+  const ctx = context(p, [], [], openMap());
+  const path = [{ x: 8, y: 10 }, { x: 8, y: 11 }];
+  assert.equal(engine.previewRouteStep(ctx, path).aligning, false);
+  ctx.map[11][9] = "S";
+  assert.equal(engine.previewRouteStep(ctx, path).aligning, true);
+});
+
+test("a shell inside the demolished guard remains a threat to the bare base", () => {
+  const engine = loadEngine();
+  const p = tank("player", 10, 20);
+  const ctx = context(p, [], [], openMap());
+  const bullet = { x: ctx.base.x + 10, y: ctx.baseGuard.y + 10, w: 6, h: 6, dir: "down", speed: 230, enemy: true };
+  const threat = engine.previewBaseProjectileThreat(ctx, bullet);
+  assert.ok(threat);
+  assert.equal(threat.exposedBase, true);
+  assert.equal(threat.guard, ctx.base);
+  assert.ok(threat.eta > 0);
+});
+
+test("intact brick or steel never counts as an exposed base firing lane", () => {
+  const engine = loadEngine();
+  const ctx = context(tank("player", 10, 20), [], [], openMap());
+  const bullet = { x: ctx.base.x + 10, y: 19 * TILE, w: 6, h: 6, dir: "down", speed: 230, enemy: true };
+  ctx.map[21][12] = "B";
+  assert.equal(engine.previewBaseProjectileThreat(ctx, bullet)?.exposedBase, false);
+  ctx.map[20][12] = "S";
+  assert.equal(engine.previewBaseProjectileThreat(ctx, bullet), null);
+});
+
+test("rejoining a displaced route preserves its firing endpoint before fallback goals", () => {
+  const engine = loadEngine();
+  const ctx = context(tank("player", 7, 10), [], [], openMap());
+  const route = [{ x: 8, y: 10 }, { x: 8, y: 11 }, { x: 8, y: 12 }];
+  const restored = engine.previewRejoinPath(ctx, route, [{ x: 7, y: 10 }]);
+  assert.equal(restored.at(-1).x, 8);
+  assert.equal(restored.at(-1).y, 12);
+  ctx.map[12][8] = "S";
+  const fallback = engine.previewRejoinPath(ctx, route, [{ x: 7, y: 10 }]);
+  assert.equal(fallback.at(-1).x, 7);
 });
 
 test("both allies lock the final enemy", () => {
@@ -794,6 +1166,30 @@ test("global control produces a reliable return route when defense margin is uns
   assert.match(plan?.action?.mode || "", /^core-global-defense/);
 });
 
+test("distant counter aiming cannot suppress an urgent assigned return", () => {
+  const engine = loadEngine();
+  const subject = tank("player", 8, 8, "up");
+  const intruder = enemy(8, 18, "fast");
+  const distant = enemy(8, 2);
+  const ctx = context(subject, [], [intruder, distant], openMap());
+  const threat = { enemy: intruder, crossed: true, defenseTier: 2,
+    dangerEta: 3, responseDeadline: 2.5, baseDistance: TILE * 4 };
+  ctx.globalThreats = [threat];
+  ctx.globalDirective = { target: intruder, threat, intercept: {
+    path: [{ x: 8, y: 8 }, { x: 8, y: 9 }, { x: 8, y: 10 }],
+  } };
+  for (const mode of ["core-counter-aim"]) {
+    const baseline = { dir: "up", fire: false, hold: true, mode, target: distant };
+    const plan = engine.previewAdvisorReliableReturn(ctx, baseline);
+    assert.equal(plan?.enemy, intruder, mode);
+    assert.equal(plan?.action?.dir, "down", mode);
+    assert.equal(engine.previewAdvisorReliableReturn(ctx, { ...baseline, target: intruder }), null);
+  }
+  for (const mode of ["core-evade-bullet", "core-base-shield", "core-freeze-pickup", "core-armor-volley", "core-terminal-base-melee-reload"]) {
+    assert.equal(engine.previewAdvisorReliableReturn(ctx, { mode, target: distant }), null, mode);
+  }
+});
+
 test("urgent global defense holds for a fresh replan instead of resuming a wrong chase", () => {
   const engine = loadEngine();
   const subject = tank("player", 8, 8, "up");
@@ -1038,6 +1434,54 @@ test("advisor retargets a base intruder and uses only verified close fire", () =
   assert.equal(frozenPlan?.enemy, intruder);
   assert.notEqual(frozenPlan?.action?.fire, true);
   assert.match(frozenPlan?.action?.mode || "", /^core-advisor-base-/);
+});
+
+test("base defense respects separate assignments when two enemies enter the nest", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 9, 19, "down");
+  const p2 = tank("player2", 17, 19, "down");
+  const left = enemy(10, 22);
+  const right = enemy(15, 22);
+  const map = openMap();
+  for (const [ally, teammate, assigned] of [[p1, p2, left], [p2, p1, right]]) {
+    const ctx = context(ally, [teammate], [left, right], map);
+    ctx.globalDirective = { target: assigned };
+    const baseline = { dir: "up", moveDir: "up", fire: false, hold: false,
+      mode: "core-chase", target: assigned };
+    const plan = engine.previewAdvisorBaseDefense(ctx, baseline, assigned);
+    assert.equal(plan?.enemy, assigned);
+    assert.equal(plan?.action?.target, assigned);
+  }
+});
+
+test("imminent direct fire at the base overrides a different local assignment", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 17, 19, "down");
+  const assigned = enemy(15, 22);
+  assigned.dir = "left";
+  const shooter = enemy(12, 21);
+  shooter.dir = "down";
+  const map = openMap();
+  map[22][14] = "S";
+  const ctx = context(defender, [], [assigned, shooter], map);
+  ctx.globalDirective = { target: assigned };
+  const baseline = { dir: "left", moveDir: "left", fire: false, hold: false,
+    mode: "core-chase", target: assigned };
+  assert.equal(engine.previewAdvisorBaseDefense(ctx, baseline, assigned)?.enemy, shooter);
+});
+
+test("final firing gate rejects a shot whose first obstacle is a guard brick", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 10, 20, "right");
+  const map = openMap();
+  map[20][11] = "B";
+  const ctx = context(defender, [], [], map);
+  const action = { dir: "right", fire: true, hold: true, mode: "core-attack-fire" };
+  const guarded = engine.previewGuardFireGate(ctx, action);
+  assert.equal(guarded.fire, false);
+  assert.equal(guarded.mode, "core-guard-shot-blocked");
+  map[20][11] = ".";
+  assert.equal(engine.previewGuardFireGate(ctx, action), action);
 });
 
 test("urgent defense assignment uses route response time and can interrupt a weaker commitment", () => {
@@ -1637,7 +2081,7 @@ test("performance scores are isolated from staged combat policy tuning", () => {
   assert.doesNotMatch(coreSource, /5 - performance/);
 });
 
-test("v2 scores migrate while policy tuning waits for a full isolated sample", () => {
+test("v2 scores migrate while normal games cannot tune the production policy", () => {
   const api = loadData({
     coreDataVersion: 2,
     weights: { defend: 4.2, survive: 5.1, attack: 6.3, clear: 3.8 },
@@ -1655,20 +2099,20 @@ test("v2 scores migrate while policy tuning waits for a full isolated sample", (
     api.finishMatch({ win: false, stage: 1, duration: 120, run: { mode: "NORMAL", speed: 1 } });
   }
   const memory = api.readMemory();
-  assert.equal(memory.lastPolicyDecision.status, "EVALUATING");
-  assert.ok(memory.policyByContext["S1:NORMAL"]);
+  assert.notEqual(memory.lastPolicyDecision?.status, "EVALUATING");
+  assert.equal(memory.policyByContext["S1:NORMAL"], undefined);
   assert.equal(memory.policyByContext["S1:TEST-4X"], undefined);
 });
 
 test("a regressive evolved policy is rolled back when base safety gets worse", () => {
   const api = loadData();
-  const run = { mode: "NORMAL", speed: 1 };
+  const run = { mode: "TEST", speed: 4 };
   for (let game = 0; game < 20; game++) {
     api.startMatch({ stage: 1, run });
     for (let kill = 0; kill < 20; kill++) api.recordExperience("enemy_killed", { stage: 1, mode: "core-chase" });
     api.finishMatch({ win: true, stage: 1, duration: 90, run });
   }
-  const champion = JSON.parse(JSON.stringify(api.readMemory().policyTuning["S1:NORMAL"].championPolicy));
+  const champion = JSON.parse(JSON.stringify(api.readMemory().policyTuning["S1:TEST-4X"].championPolicy));
   assert.equal(api.readMemory().lastPolicyDecision.status, "EVALUATING");
 
   for (let game = 0; game < 20; game++) {
@@ -1679,7 +2123,7 @@ test("a regressive evolved policy is rolled back when base safety gets worse", (
   const memory = api.readMemory();
   assert.equal(memory.lastPolicyDecision.status, "ROLLED_BACK");
   assert.equal(memory.lastPolicyDecision.safeguards.baseSafe, false);
-  assert.deepEqual(JSON.parse(JSON.stringify(memory.policyByContext["S1:NORMAL"])), champion);
+  assert.deepEqual(JSON.parse(JSON.stringify(memory.policyByContext["S1:TEST-4X"])), champion);
 });
 
 test("autonomous evolution turns combat rewards into persistent action value", () => {
@@ -1707,7 +2151,7 @@ test("base destruction strongly penalizes both allies' recent autonomous decisio
   assert.ok(memory.states["S1|rear-right"].actions["hold:hold:T0"].q < 0);
 });
 
-test("autonomous policy promotes only an action with repeated evidence", () => {
+test("local reward evidence nominates candidates without publishing a generation", () => {
   const api = loadData();
   api.startMatch({ stage: 1, run: { mode: "NORMAL", speed: 1 } });
   for (let step = 1; step <= 5; step++) {
@@ -1716,11 +2160,11 @@ test("autonomous policy promotes only an action with repeated evidence", () => {
   }
   const state = api.readMemory().autonomy.states["S1|intercept"];
   assert.equal(state.champion, "move:toward:T0");
-  assert.ok(api.readMemory().autonomy.generation >= 1);
-  assert.equal(api.readMemory().autonomy.lastDecision.status, "PROMOTED");
+  assert.equal(api.readMemory().autonomy.generation, 0);
+  assert.equal(api.readMemory().autonomy.lastDecision.status, "CANDIDATE_ONLY");
 });
 
-test("autonomous state values survive reload and expose conservative champion bias", () => {
+test("restored candidate values cannot bias normal games and remain usable in tests", () => {
   const api = loadData({
     coreDataVersion: 5,
     autonomy: {
@@ -1745,9 +2189,19 @@ test("autonomous state values survive reload and expose conservative champion bi
     { urgent: true, forceExplore: true },
   );
   assert.equal(restored.generation, 7);
-  assert.equal(evaluation.champion, "fire:toward:T0");
+  assert.equal(evaluation.champion, null);
   assert.equal(evaluation.exploreKey, null, "urgent defense must never explore");
-  assert.ok(evaluation.biases["fire:toward:T0"] > evaluation.biases["move:away:T1"]);
+  assert.equal(evaluation.biases["fire:toward:T0"], 0);
+  assert.equal(evaluation.biases["move:away:T1"], 0);
+  const forced = api.evaluateAutonomyActions("S1|terminal", ["fire:toward:T0", "move:away:T1"],
+    { urgent: false, safeToExplore: true, forceExplore: true });
+  assert.equal(forced.exploreKey, null);
+  assert.equal(forced.explorationRate, 0);
+  assert.equal(forced.biases["fire:toward:T0"], 0);
+  api.startMatch({ stage: 1, run: { mode: "TEST", speed: 4 } });
+  const candidate = api.evaluateAutonomyActions("S1|terminal", ["fire:toward:T0", "move:away:T1"], { urgent: true });
+  assert.ok(candidate.biases["fire:toward:T0"] > candidate.biases["move:away:T1"]);
+  assert.equal(candidate.exploreKey, null);
 });
 
 test("hot-upgrade handoff carries unfinished autonomous eligibility traces", () => {
@@ -1764,7 +2218,7 @@ test("autonomous state and action keys generalize positions into tactical bucket
   const ctx = context(subject, [], [threat], openMap());
   const stateKey = engine.previewAutonomyState(ctx, threat);
   const actionKey = engine.previewAutonomyAction(subject, threat, { dir: "up", fire: true, hold: false });
-  assert.match(stateKey, /^S1\|/);
+  assert.match(stateKey, /^T2-X\d-S\d-W\d-B\d\|/);
   assert.match(stateKey, /\|near\||\|mid\|/);
   assert.equal(actionKey, "move-fire:toward:T0");
 });
@@ -1910,6 +2364,27 @@ test("loop recovery detects a tight four-direction cycle without false triggerin
   const progressing = engine.previewMovementLoop(stalled, { x: 100, y: 100 }, 260);
   assert.equal(progressing.detected, false);
   assert.equal(progressing.reason, "");
+});
+
+test("alternating turn commands do not interrupt a route making physical progress", () => {
+  const engine = loadEngine();
+  const history = [
+    { dir: "left", time: 1, x: 100, y: 100, distance: 320 },
+    { dir: "right", time: 1.3, x: 92, y: 130, distance: 295 },
+    { dir: "left", time: 1.6, x: 110, y: 160, distance: 265 },
+    { dir: "right", time: 1.9, x: 100, y: 185, distance: 235 },
+  ];
+  assert.equal(engine.previewMovementLoop(history, { x: 100, y: 185 }, 235).detected, false);
+  assert.equal(engine.previewMovementLoop(history, { x: 100, y: 100 }, 320).detected, true);
+});
+
+test("a five-turn detour is not a closed loop unless it returns without progress", () => {
+  const engine = loadEngine();
+  const history = ["up", "right", "down", "left", "up"].map((dir, i) => ({
+    dir, time: 1 + i * 0.2, x: 100 + i * 16, y: 100, distance: 320 - i * 16,
+  }));
+  assert.equal(engine.previewMovementLoop(history, { x: 164, y: 100 }, 256).detected, false);
+  assert.equal(engine.previewMovementLoop(history, { x: 100, y: 100 }, 320).detected, true);
 });
 
 test("global advisor preserves a committed loop escape route", () => {

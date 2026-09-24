@@ -5,8 +5,11 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { AiDatabase } = require("./ai-database");
+const { ReleaseStore } = require("./tools/policy-release.cjs");
+const { liveReport } = require("./tools/best-runs.cjs");
 
 const ROOT = __dirname;
+const policyReleases = new ReleaseStore(ROOT);
 
 function loadLocalEnv() {
   const file = path.join(ROOT, ".env");
@@ -179,12 +182,37 @@ function writeAiMemory(data) {
 const server = http.createServer(async (req, res) => {
   try {
     const pathname = req.url.split("?")[0];
+    if (pathname === "/ai-policy" || pathname === "/ai-policy/outcome") {
+      const origin = req.headers.origin;
+      if (origin && origin !== `http://${req.headers.host}`) {
+        res.writeHead(403); res.end("Origin denied"); return;
+      }
+      if (pathname === "/ai-policy" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify(policyReleases.current())); return;
+      }
+      if (pathname === "/ai-policy/outcome" && req.method === "POST") {
+        const result = policyReleases.recordOutcome(await readJsonBody(req));
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify(result)); return;
+      }
+      res.writeHead(405); res.end("Method not allowed"); return;
+    }
     if (req.url.startsWith("/version")) {
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
       res.end(versionPayload());
+      return;
+    }
+
+    if (pathname === "/records/best-five-runs.json" && req.method === "GET") {
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(JSON.stringify(liveReport(aiDatabase.db)));
       return;
     }
 

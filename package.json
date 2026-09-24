@@ -6,7 +6,9 @@
     "start": "node dev-server.js",
     "test": "node --test tests/*.test.cjs",
     "typecheck": "tsc --noEmit",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "ai:evolve": "node tools/evolve.cjs",
+    "ai:release-status": "node tools/release-status.cjs"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

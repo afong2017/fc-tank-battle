@@ -2,6 +2,8 @@ node_modules/
 .env
 versions/
 output/
+test-results/
+policy-releases/
 .pnpm-store/
 npm-debug.log*
 yarn-debug.log*
