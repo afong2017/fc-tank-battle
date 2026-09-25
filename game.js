@@ -3814,18 +3814,6 @@ function drawTargetLink(tank, color, autoControlled) {
   return target;
 }
 
-function drawTargetMarker(tank, color, autoControlled) {
-  const target = autoControlled && tank?.alive && visibleEnemyForAlly(tank.attackTarget)
-    ? tank.attackTarget : null;
-  if (!target) return;
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.setLineDash([4, 3]);
-  ctx.strokeRect(Math.round(target.x) - 3, Math.round(target.y) - 3, target.w + 6, target.h + 6);
-  ctx.restore();
-}
-
 function drawTargetLinks() {
   drawTargetLink(player, "rgba(255, 232, 96, 0.9)", p1Auto);
   drawTargetLink(player2, "rgba(92, 215, 255, 0.9)", !p2Human);
@@ -3870,8 +3858,6 @@ function draw() {
   drawTank(player);
   drawTank(player2);
   enemies.forEach(drawTank);
-  drawTargetMarker(player, "rgba(255, 232, 96, 0.9)", p1Auto);
-  drawTargetMarker(player2, "rgba(92, 215, 255, 0.9)", !p2Human);
   ctx.fillStyle = colors.bullet;
   bullets.forEach((b) => ctx.fillRect(Math.round(b.x), Math.round(b.y), b.w, b.h));
   for (let y = 0; y < ROWS; y++) {

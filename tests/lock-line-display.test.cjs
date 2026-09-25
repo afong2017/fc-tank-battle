@@ -22,11 +22,12 @@ test("lock display uses only the active AI target and its own route", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "game.js"), "utf8");
   const start = source.indexOf("function drawTargetLink(");
   const end = source.indexOf("function drawTargetLinks(", start);
-  const strokes = [], markers = [];
+  assert.doesNotMatch(source, /drawTargetMarker|strokeRect\(Math\.round\(target\.x\)/);
+  const strokes = [];
   const ctx = {
     save() {}, restore() {}, setLineDash() {}, beginPath() {}, moveTo() {},
     lineTo(x, y) { strokes.push([x, y]); },
-    stroke() {}, strokeRect(x, y) { markers.push([x, y]); },
+    stroke() {},
   };
   const sandbox = {
     ctx, TILE: 32, performance: { now: () => 0 },
@@ -37,30 +38,25 @@ test("lock display uses only the active AI target and its own route", () => {
     isAttackRouteMode: () => true,
   };
   vm.createContext(sandbox);
-  const { drawTargetLink, drawTargetMarker } = vm.runInContext(
-    `${source.slice(start, end)}\n({ drawTargetLink, drawTargetMarker })`, sandbox);
+  const { drawTargetLink } = vm.runInContext(
+    `${source.slice(start, end)}\n({ drawTargetLink })`, sandbox);
   const target = { alive: true, x: 160, y: 96, w: 28, h: 28 };
   const tank = { alive: true, x: 16, y: 16, w: 28, h: 28,
     lockedBaseTarget: target, attackTarget: null };
   drawTargetLink(tank, "cyan", true);
-  drawTargetMarker(tank, "cyan", true);
-  assert.equal(markers.length, 0, "a guessed fallback target must not be drawn");
+  assert.equal(strokes.length, 0, "a guessed fallback target must not be drawn");
 
   tank.attackTarget = target;
   tank.attackRouteTarget = target;
   tank.attackRouteMode = "core-v3-attack-route";
   tank.attackRoute = [{ x: 30, y: 30 }, { x: 62, y: 30 }, { x: 62, y: 110 }, { x: 174, y: 110 }];
   drawTargetLink(tank, "cyan", true);
-  drawTargetMarker(tank, "cyan", true);
   assert.ok(strokes.some(([x, y]) => x === 62 && y === 110));
-  assert.equal(markers.length, 1);
 
   strokes.length = 0;
   tank.attackRouteTarget = { ...target };
   drawTargetLink(tank, "cyan", true);
-  drawTargetMarker(tank, "cyan", true);
   assert.equal(strokes.length, 0, "another target's route must not be reused");
-  assert.equal(markers.length, 2, "the actual target remains marked while replanning");
 
   strokes.length = 0;
   tank.attackRoute = null;
@@ -73,7 +69,7 @@ test("lock display uses only the active AI target and its own route", () => {
   drawTargetLink(tank, "cyan", true);
   assert.ok(strokes.some(([x]) => x === target.x), "a verified aim shows the same direct lane");
 
+  const drawn = strokes.length;
   drawTargetLink(tank, "cyan", false);
-  drawTargetMarker(tank, "cyan", false);
-  assert.equal(markers.length, 2, "manual tanks must not show an AI lock");
+  assert.equal(strokes.length, drawn, "manual tanks must not show an AI lock");
 });
