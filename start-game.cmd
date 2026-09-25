@@ -33,5 +33,9 @@ if errorlevel 1 (
 )
 
 :open_game
-start "" "http://127.0.0.1:8080/"
+if /i "%~1"=="v3" (
+  start "" "http://127.0.0.1:8080/?ai=v3"
+) else (
+  start "" "http://127.0.0.1:8080/"
+)
 endlocal

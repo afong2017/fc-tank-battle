@@ -159,6 +159,7 @@ canvas {
   cursor: pointer;
   white-space: nowrap;
 }
+#bestRunsOpen:disabled { color: #aaa690; text-decoration: none; cursor: default; }
 
 #bestRunsDialog {
   box-sizing: border-box;
@@ -236,7 +237,8 @@ p {
   width: min(100%, 504px);
 }
 
-.start-options label {
+.start-options label,
+.start-options .menu-option {
   display: grid;
   gap: 6px;
   padding: 4px;
@@ -245,7 +247,8 @@ p {
   font-size: 12px;
 }
 
-.start-options label.active {
+.start-options label.active,
+.start-options .menu-option.active {
   border-color: var(--gold);
   color: var(--ink);
 }
@@ -271,6 +274,11 @@ p {
   color: var(--ink);
   font-size: 18px;
 }
+
+.ai-version-option { grid-column: span 2; }
+.ai-version-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.ai-version-picker button { min-height: 36px; font-size: 15px; white-space: nowrap; }
+.ai-version-picker button[aria-pressed="true"] { border-color: var(--gold); color: var(--gold); background: #29252a; }
 
 .stage-picker {
   display: grid;
@@ -405,12 +413,15 @@ button:focus-visible {
   }
 
   .ai-bottom-panel {
-    grid-template-columns: repeat(2, 1fr);
-    min-height: 96px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-height: 130px;
+    gap: 8px;
   }
 
   .playfield {
-    grid-template-rows: auto 96px 38px;
+    grid-template-rows: auto auto minmax(130px, auto) minmax(120px, auto);
+    height: max-content;
+    overflow: visible;
   }
 
   .ai-bottom-panel strong {
@@ -423,11 +434,33 @@ button:focus-visible {
   }
 
   .overlay {
-    inset: 0 0 120px 0;
+    position: relative;
+    inset: auto;
+    grid-row: 2;
+    gap: 8px;
+    padding: 16px 8px;
+    background: #101014;
+  }
+
+  .ai-bottom-panel {
+    grid-row: 3;
+  }
+
+  .ai-version-panel {
+    grid-row: 4;
+    grid-template-columns: max-content minmax(0, 1fr);
+    min-height: 120px;
+    gap: 5px 8px;
+  }
+
+  .ai-version-panel strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
   }
 
   .start-options {
-    grid-template-columns: 1fr;
-    width: min(100%, 180px);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: min(100%, 320px);
   }
 }

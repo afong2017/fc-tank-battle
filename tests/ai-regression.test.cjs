@@ -99,6 +99,36 @@ function openMap() {
   return Array.from({ length: 24 }, () => Array(26).fill("."));
 }
 
+test("point-blank target fires immediately despite a conflicting global assignment", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 7, 10, "left");
+  const close = enemy(8, 10);
+  const distant = enemy(12, 20);
+  const ctx = context(defender, [], [distant, close], openMap());
+  ctx.meleeShot = (dir, target) => dir === "right" && target === close
+    ? { type: "enemy", target: close } : null;
+  const action = engine.createController("1P").decide(ctx);
+  assert.equal(action.mode, "core-melee-direct");
+  assert.equal(action.dir, "right");
+  assert.equal(action.fire, true);
+  assert.equal(action.target, close);
+});
+
+test("point-blank repositioning keeps one committed direction across replans", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 7, 10, "left");
+  const close = enemy(8, 11);
+  const ctx = context(defender, [], [close], openMap());
+  ctx.meleeShot = () => null;
+  const controller = engine.createController("1P");
+  const first = controller.decide(ctx);
+  ctx.gameTime += 0.1;
+  const second = controller.decide(ctx);
+  assert.equal(first.mode, "core-melee-route");
+  assert.equal(second.mode, "core-melee-route");
+  assert.equal(second.dir, first.dir);
+});
+
 test("unreachable freeze pickup does not invalidate global analysis every frame", () => {
   const engine = loadEngine();
   const defender = tank("player", 7, 10);
@@ -144,6 +174,53 @@ test("global assignments refresh on ally death and respawn without waiting for t
   const respawn = engine.previewGlobalBattle(ctx, 10.03);
   assert.notEqual(respawn, dead);
   assert.equal(respawn.assignments.has(replacement), true);
+});
+
+test("two on-time defenders retain separate critical targets as their costs cross", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 11, 2);
+  const p2 = tank("player2", 15, 2);
+  const left = enemy(12, 2);
+  const right = enemy(14, 2);
+  left.dir = "up";
+  right.dir = "up";
+  const ctx = context(p1, [p2], [left, right], openMap());
+  const first = engine.previewGlobalBattle(ctx, 1);
+  assert.equal(first.assignments.get(p1).target, left);
+  assert.equal(first.assignments.get(p2).target, right);
+  p1.x = 15 * TILE + 2;
+  p2.x = 10 * TILE + 2;
+  ctx.gameTime = 1.4;
+  const second = engine.previewGlobalBattle(ctx, 1.4);
+  const leftThreat = second.threats.find((threat) => threat.enemy === left);
+  const rightThreat = second.threats.find((threat) => threat.enemy === right);
+  assert.ok(leftThreat.responseEtas.get(p1) <= leftThreat.responseDeadline);
+  assert.ok(leftThreat.responseDeadline - leftThreat.responseEtas.get(p1) >= 0.8,
+    `${leftThreat.responseDeadline}:${leftThreat.responseEtas.get(p1)}`);
+  assert.ok(rightThreat.responseEtas.get(p2) <= rightThreat.responseDeadline);
+  assert.equal(second.assignments.get(p1).target, left);
+  assert.equal(second.assignments.get(p2).target, right);
+});
+
+test("critical ownership transfers when the original defender misses the deadline", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 11, 18);
+  const p2 = tank("player2", 15, 18);
+  const left = enemy(12, 15);
+  const right = enemy(14, 15);
+  const ctx = context(p1, [p2], [left, right], openMap());
+  const first = engine.previewGlobalBattle(ctx, 1);
+  assert.equal(first.assignments.get(p1).target, left);
+  assert.equal(first.assignments.get(p2).target, right);
+  p1.x = 14 * TILE + 2;
+  p2.x = 12 * TILE + 2;
+  ctx.gameTime = 1.4;
+  const second = engine.previewGlobalBattle(ctx, 1.4);
+  const leftThreat = second.threats.find((threat) => threat.enemy === left);
+  assert.ok(leftThreat.responseEtas.get(p1) > leftThreat.responseDeadline);
+  assert.ok(leftThreat.responseEtas.get(p2) <= leftThreat.responseDeadline);
+  assert.equal(second.assignments.get(p2).target, left);
+  assert.equal(second.assignments.get(p1).target, right);
 });
 
 test("new visible enemies invalidate global analysis but array replacement does not", () => {
@@ -230,6 +307,68 @@ test("unseen layouts expose side and lower base entrances when the upper route i
     assert.ok(goals.some(g => g.y === gy + 3));
     assert.ok(goals.every(g => map[g.y][g.x] !== "S"));
   }
+});
+
+test("enemy base approach uses a nearby side opening even when the top is open", () => {
+  const engine = loadEngine();
+  const attacker = enemy(8, 23);
+  const map = openMap();
+  for (let y = 21; y <= 23; y++) {
+    map[y][11] = "B";
+    map[y][14] = "B";
+  }
+  map[23][12] = "B";
+  map[23][13] = "B";
+  const ctx = context(tank("player", 12, 18), [], [attacker], map);
+  assert.equal(engine.previewBaseDefenseProfile(ctx, attacker).baseRoute.at(-1).y, 20,
+    "intact guard walls must keep the established top approach");
+  map[22][11] = ".";
+  ctx.mapVersion++;
+  const route = engine.previewBaseDefenseProfile(ctx, attacker).baseRoute;
+  assert.ok(route.length >= 2);
+  assert.deepEqual({ x: route.at(-1).x, y: route.at(-1).y }, { x: 10, y: 22 });
+  assert.ok(engine.previewMapEntryGoals(ctx).every((cell) => cell.y === 20),
+    "normal defender staging still uses the upper entrance");
+});
+
+test("whole-map base danger field follows reachable lanes and invalidates on terrain changes", () => {
+  const engine = loadEngine();
+  const map = openMap();
+  const attacker = enemy(8, 10);
+  const ctx = context(tank("player", 12, 18), [], [attacker], map);
+  for (let y = 0; y < ctx.rows; y++) map[y][10] = "S";
+  const sealed = engine.previewBaseDangerField(ctx, attacker.speed);
+  assert.equal(sealed.distances.length, ctx.cols * ctx.rows);
+  assert.equal(sealed.distances[10 * ctx.cols + 8], Infinity);
+  assert.equal(engine.previewBaseDangerField(ctx, attacker.speed), sealed);
+  map[10][10] = ".";
+  ctx.mapVersion++;
+  const opened = engine.previewBaseDangerField(ctx, attacker.speed);
+  assert.notEqual(opened, sealed);
+  assert.ok(Number.isFinite(opened.distances[10 * ctx.cols + 8]));
+  assert.ok(Number.isFinite(engine.previewBaseDefenseProfile(ctx, attacker).fieldEta));
+  const fast = engine.previewBaseDangerField(ctx, 105);
+  assert.notEqual(fast, opened);
+  assert.equal(engine.previewBaseDangerField(ctx, attacker.speed), opened);
+});
+
+test("whole-map danger advances distant threat ranking without changing urgent deadlines", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 12, 18);
+  const attacker = enemy(8, 6);
+  const ctx = context(defender, [], [attacker], openMap());
+  const responseEtas = new WeakMap([[defender, 6]]);
+  const threat = {
+    enemy: attacker, defenseTier: 3, dangerEta: 12, responseDeadline: 11,
+    baseDistance: 400, crossed: false, fast: false, direct: null,
+    responseEtas, fieldEta: 8,
+  };
+  const distant = engine.previewGlobalAssignmentCost(ctx, defender, threat);
+  const nearerLane = engine.previewGlobalAssignmentCost(ctx, defender, { ...threat, fieldEta: 5 });
+  assert.ok(nearerLane < distant);
+  const urgent = { ...threat, defenseTier: 2 };
+  assert.equal(engine.previewGlobalAssignmentCost(ctx, defender, urgent),
+    engine.previewGlobalAssignmentCost(ctx, defender, { ...urgent, fieldEta: 5 }));
 });
 
 test("terrain learning keys transfer across stage numbers and react to cleared obstacles", () => {
@@ -544,6 +683,68 @@ test("both allies lock the final enemy", () => {
   assert.equal(a2.lockedTarget, last);
 });
 
+test("two advanced allies take separate top lanes and stop screening on breakthrough", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 7, 5, "up");
+  const p2 = tank("player2", 19, 7, "up");
+  const map = openMap();
+  const left = engine.previewTopScreen(context(p1, [p2], [], map));
+  const right = engine.previewTopScreen(context(p2, [p1], [], map));
+  assert.equal(left?.action.mode, "core-top-screen-fire");
+  assert.equal(right?.action.mode, "core-top-screen-fire");
+  assert.equal(engine.createController("1P").decide(context(p1, [p2], [], map)).mode,
+    "core-top-screen-fire");
+  assert.equal(engine.createController("2P").decide(context(p2, [p1], [], map)).mode,
+    "core-top-screen-fire");
+  assert.notEqual(Math.floor(p1.x / TILE), Math.floor(p2.x / TILE));
+  assert.notEqual(Math.floor(p1.y / TILE), Math.floor(p2.y / TILE));
+  const stacked1 = tank("player", 13, 5, "up");
+  const stacked2 = tank("player2", 13, 7, "up");
+  const separate1 = engine.previewTopScreen(context(stacked1, [stacked2], [], map));
+  const separate2 = engine.previewTopScreen(context(stacked2, [stacked1], [], map));
+  assert.equal(separate1?.action.mode, "core-top-screen-route");
+  assert.equal(separate2?.action.mode, "core-top-screen-route");
+  assert.ok(separate1.route.at(-1).x < stacked1.x / TILE);
+  assert.ok(separate2.route.at(-1).x > stacked2.x / TILE);
+  const breakthrough = enemy(12, 12);
+  assert.equal(engine.previewTopScreen(context(p1, [p2], [breakthrough], map)), null);
+  assert.equal(engine.previewTopScreen(context(p1, [p2], [enemy(12, 2)], map)), null,
+    "an existing enemy must be hunted rather than screened past");
+  map[3][7] = "S";
+  assert.notEqual(engine.previewTopScreen(context(p1, [p2], [], map))?.action.mode,
+    "core-top-screen-fire");
+});
+
+test("top screening never authorizes a blocked, downward or friendly-fire shot", () => {
+  const source = fs.readFileSync(path.join(ROOT, "game.js"), "utf8");
+  assert.match(source, /if \(hit.type === "ally"\) return false;\s*if \(action.mode === "core-top-screen-fire"\)/);
+  assert.match(source, /intendedDir === "up" && \(hit.type === "edge" \|\| hit.type === "none" \|\| hit.type === "enemy"\)/);
+});
+
+test("the final visible enemy is actively pursued instead of waiting at an intercept", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 10, 20);
+  const p2 = tank("player2", 14, 20);
+  const last = enemy(5, 5);
+  const ctx = context(p1, [p2], [last], openMap());
+  const action = engine.createController("1P").decide(ctx);
+  assert.equal(action.lockedTarget, last);
+  assert.doesNotMatch(action.mode, /intercept|rear-recover|global-defense-hold/);
+  assert.ok(action.fire || !action.hold, action.mode);
+});
+
+test("display recognizes live global and advisor routes as lock lines", () => {
+  const source = fs.readFileSync(path.join(ROOT, "game.js"), "utf8");
+  const start = source.indexOf("function isAttackRouteMode(");
+  const end = source.indexOf("function drawTargetLink(", start);
+  assert.ok(start >= 0 && end > start);
+  const routeMode = vm.runInNewContext(`${source.slice(start, end)}\nisAttackRouteMode`);
+  for (const mode of ["core-global-defense-route", "core-advisor-global-route",
+    "core-defense-loop-route", "core-final-search-route"]) {
+    assert.equal(routeMode(mode), true, mode);
+  }
+});
+
 test("search cannot move or fire a frozen enemy and resumes after expiry", () => {
   const api = loadEngine();
   const defender = tank("player", 8, 16);
@@ -690,6 +891,7 @@ test("base defense ranks credible firing routes before geometric distance", () =
   const source = fs.readFileSync(path.join(ROOT, "ai-core.js"), "utf8");
   assert.match(source, /function baseDefenseProfile\(ctx, enemy\)/);
   assert.match(source, /const credibleEta = Math\.min\(routeEta, attackEta\)/);
+  assert.match(source, /const mapPressure = threat\.defenseTier >= 3/);
   assert.match(source, /Number\.isFinite\(credibleEta\) \? credibleEta : geometricEta \+ 2\.5/);
   assert.match(source, /const defenseTier = direct\?\.target === "base" \? 0/);
   assert.match(source, /const impactMargin = \(direct\?\.target === "base" \? 0\.18/);
@@ -700,6 +902,12 @@ test("base defense ranks credible firing routes before geometric distance", () =
 test("an opposite-side base defender follows the global terminal route to the correct flank", () => {
   const engine = loadEngine();
   const map = openMap();
+  for (let y = 21; y <= 23; y++) {
+    for (let x = 11; x <= 14; x++) map[y][x] = "B";
+  }
+  for (let y = 22; y <= 23; y++) {
+    for (let x = 12; x <= 13; x++) map[y][x] = "E";
+  }
   const intruder = enemy(10, 22);
   const defender = tank("player2", 16, 22, "down");
   const controller = engine.createController("2P");
@@ -761,7 +969,7 @@ test("a safe firing lane interrupts global defense movement immediately", () => 
   const action = engine.createController("2P").decide(ctx);
 
   assert.equal(action.lockedTarget, intruder);
-  assert.match(action.mode, /^core-(?:base-corridor|advisor-base|defense-contract)-fire$/);
+  assert.match(action.mode, /^core-(?:(?:base-corridor|advisor-base|defense-contract)-fire|base-lane-safe-fire)$/);
   assert.equal(action.dir, "left");
   assert.equal(action.fire, true);
 });
@@ -864,6 +1072,22 @@ test("a newly nearer breakthrough replaces an obsolete hard assignment", () => {
 
   assert.equal(next1.lockedTarget, secondThreat, `1P=${next1.mode} 2P=${next2.mode}`);
   assert.equal(next2.lockedTarget, firstThreat, `1P=${next1.mode} 2P=${next2.mode}`);
+});
+
+test("a living near-base assignment cannot be displaced by an easier distant kill", () => {
+  const engine = loadEngine();
+  const near = { enemy: enemy(11, 18), crossed: true,
+    baseDistance: TILE * 4.5, dangerEta: 1.6 };
+  const distant = { enemy: enemy(24, 12), crossed: true,
+    baseDistance: TILE * 18, dangerEta: 2.5 };
+  assert.equal(engine.previewNearBaseCommit(near, distant), true);
+  const direct = { ...distant, direct: { target: "base", eta: 0.8 } };
+  assert.equal(engine.previewNearBaseCommit(near, direct), false);
+  assert.equal(engine.previewNearBaseCommit(near, {
+    ...distant, baseDistance: TILE * 5.5,
+  }), false);
+  near.enemy.alive = false;
+  assert.equal(engine.previewNearBaseCommit(near, distant), false);
 });
 
 test("a terminal base threat overrides a living but less urgent hard target", () => {
@@ -1099,6 +1323,25 @@ test("global control advances only while another ally preserves rear coverage", 
   });
   assert.notEqual(plan.action.moveDir || plan.action.dir, "up");
   assert.match(plan.action.mode, /^core-global-rear/);
+});
+
+test("active frozen pursuit is not replaced by rear recovery", () => {
+  const engine = loadEngine();
+  const subject = tank("player2", 16, 8, "up");
+  const rear = tank("player", 8, 8, "up");
+  const threat = enemy(16, 2);
+  const ctx = context(subject, [rear], [threat], openMap());
+  ctx.freezeTime = 3;
+  const baseline = { dir: "up", moveDir: "up", fire: false, hold: false,
+    mode: "core-freeze-assault", target: threat };
+  const plan = engine.previewAdvisorGlobalControl(ctx, baseline, threat);
+  assert.equal(plan.action.mode, "core-freeze-assault");
+  assert.equal(plan.action.dir, "up");
+  assert.equal(plan.action.hold, false);
+
+  ctx.freezeTime = 0;
+  const normal = engine.previewAdvisorGlobalControl(ctx, baseline, threat);
+  assert.match(normal.action.mode, /^core-global-rear/);
 });
 
 test("advisor cache identity follows ally coverage and assignment changes", () => {
@@ -1470,6 +1713,30 @@ test("imminent direct fire at the base overrides a different local assignment", 
   assert.equal(engine.previewAdvisorBaseDefense(ctx, baseline, assigned)?.enemy, shooter);
 });
 
+test("a covered base shooter does not pull both defenders off separate terminal targets", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 12, 18, "down");
+  const p2 = tank("player2", 17, 19, "left");
+  const shooter = enemy(12, 21);
+  const assigned = enemy(15, 22);
+  const map = openMap();
+  map[22][14] = "S";
+  const ctx = context(p2, [p1], [shooter, assigned], map);
+  const shooterThreat = { enemy: shooter, defenseTier: 0, responseDeadline: 2,
+    responseEtas: new WeakMap([[p1, 0.5]]) };
+  const assignedThreat = { enemy: assigned, defenseTier: 1, responseDeadline: 2 };
+  ctx.globalThreats = [shooterThreat, assignedThreat];
+  ctx.globalDirective = { target: assigned };
+  ctx.globalAssignments = new Map([[p1, { target: shooter }], [p2, { target: assigned }]]);
+  const baseline = { dir: "left", moveDir: "left", fire: false, hold: false,
+    mode: "core-chase", target: assigned };
+  assert.equal(engine.previewAdvisorBaseDefense(ctx, baseline, assigned)?.enemy, assigned);
+  shooterThreat.responseEtas.set(p1, 1.8);
+  assert.equal(engine.previewAdvisorBaseDefense(ctx, baseline, assigned)?.enemy, shooter);
+  shooterThreat.responseEtas.set(p1, 3);
+  assert.equal(engine.previewAdvisorBaseDefense(ctx, baseline, assigned)?.enemy, shooter);
+});
+
 test("final firing gate rejects a shot whose first obstacle is a guard brick", () => {
   const engine = loadEngine();
   const defender = tank("player", 10, 20, "right");
@@ -1482,6 +1749,383 @@ test("final firing gate rejects a shot whose first obstacle is a guard brick", (
   assert.equal(guarded.mode, "core-guard-shot-blocked");
   map[20][11] = ".";
   assert.equal(engine.previewGuardFireGate(ctx, action), action);
+});
+
+test("a verified enemy-first shot is not cancelled by a guard brick behind the enemy", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 12, 18, "down");
+  const intruder = enemy(12, 20);
+  const map = openMap();
+  map[21][12] = "B";
+  const ctx = context(defender, [], [intruder], map);
+  const action = { dir: "down", fire: true, hold: true,
+    mode: "core-base-lane-safe-fire", target: intruder };
+  ctx.canDirectShoot = (dir, target) => dir === "down" && target === intruder;
+  assert.equal(engine.previewGuardFireGate(ctx, action), action);
+  ctx.canDirectShoot = () => false;
+  assert.equal(engine.previewGuardFireGate(ctx, action).fire, false);
+  assert.equal(map[21][12], "B");
+});
+
+test("an emergency collateral shot is not cancelled merely because a guard brick is first", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 12, 18, "down");
+  const intruder = enemy(12, 20);
+  const map = openMap();
+  map[19][12] = "B";
+  const ctx = context(defender, [], [intruder], map);
+  const action = { dir: "down", fire: true, hold: true,
+    mode: "core-base-melee-fire", target: intruder };
+  ctx.canEmergencyCollateralShot = (dir, target) => dir === "down" && target === intruder;
+  assert.equal(engine.previewGuardFireGate(ctx, action), action);
+  ctx.canEmergencyCollateralShot = () => false;
+  assert.equal(engine.previewGuardFireGate(ctx, action).fire, false);
+});
+
+test("a live base emergency may clear its first guard brick toward the intruder", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 12, 18, "down");
+  const intruder = enemy(12, 20);
+  const map = openMap();
+  map[19][12] = "B";
+  const ctx = context(defender, [], [intruder], map);
+  ctx.canDirectShoot = (dir, target) => dir === "down" && target === intruder;
+  ctx.canEmergencyCollateralShot = (dir, target) => dir === "down" && target === intruder;
+  const action = engine.createController("1P").decide(ctx);
+  assert.equal(action.target, intruder);
+  assert.equal(action.dir, "down");
+  assert.equal(action.fire, true, action.mode);
+});
+
+test("safe base-facing fire interrupts a different lock but nearby freeze still wins", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 12, 18, "down");
+  const intruder = enemy(12, 20);
+  const distant = enemy(4, 5);
+  const map = openMap();
+  map[21][12] = "B";
+  const ctx = context(defender, [], [intruder, distant], map);
+  ctx.canDirectShoot = (dir, target) => dir === "down" && target === intruder;
+  ctx.canShoot = ctx.canDirectShoot;
+  const baseline = { dir: "left", moveDir: "left", fire: false,
+    hold: false, mode: "core-chase", target: distant };
+  const plan = engine.previewAdvisorGlobalControl(ctx, baseline, distant);
+  assert.equal(plan.kind, "base-lane-shot");
+  assert.equal(plan.action.target, intruder);
+  assert.equal(plan.action.dir, "down");
+  assert.equal(plan.action.fire, true);
+  assert.equal(plan.action.hold, true);
+  const freeze = { x: defender.x + TILE, y: defender.y, w: 28, h: 28,
+    type: "freeze", dead: false };
+  ctx.bonuses = [freeze];
+  const pickupPlan = engine.previewAdvisorGlobalControl(ctx, baseline, distant);
+  assert.equal(pickupPlan.kind, "critical");
+  assert.equal(pickupPlan.category, "freeze-control");
+});
+
+test("a verified close enemy interrupts a farther defense route outside the base zone", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 16, 10, "left");
+  const nearby = enemy(14, 10);
+  const ctx = context(defender, [], [nearby], openMap());
+  ctx.canDirectShoot = (dir, target) => dir === "left" && target === nearby;
+  const baseline = { dir: "down", moveDir: "down", fire: false,
+    hold: false, mode: "core-global-defense-route", target: nearby };
+  const plan = engine.previewAdvisorGlobalControl(ctx, baseline, nearby);
+  assert.equal(plan.action.target, nearby);
+  assert.equal(plan.action.dir, "left");
+  assert.equal(plan.action.fire, true);
+  assert.equal(plan.action.hold, false);
+});
+
+test("a nearby shot does not interrupt a closing turn or fire through a blocked lane", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 16, 10, "up");
+  const nearby = enemy(14, 10);
+  const map = openMap();
+  const ctx = context(defender, [], [nearby], map);
+  ctx.canDirectShoot = (dir, target) => dir === "left" && target === nearby;
+  const baseline = { dir: "left", moveDir: "left", fire: false,
+    hold: false, mode: "core-global-defense-route", target: nearby };
+  const aim = engine.previewAdvisorGlobalControl(ctx, baseline, nearby);
+  assert.notEqual(aim.kind, "near-lane-shot");
+  defender.dir = "left";
+  map[10][15] = "S";
+  const blocked = engine.previewAdvisorGlobalControl(ctx, baseline, nearby);
+  assert.notEqual(blocked.kind, "near-lane-shot");
+  assert.equal(blocked.action.fire, false);
+});
+
+test("a confirmed locked shot stops a route that moves away before turning", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 16, 10, "up");
+  const nearby = enemy(14, 10);
+  const ctx = context(defender, [], [nearby], openMap());
+  ctx.canDirectShoot = (dir, target) => dir === "left" && target === nearby;
+  const baseline = { dir: "right", moveDir: "right", fire: false,
+    hold: false, mode: "core-global-defense-route", target: nearby };
+  const plan = engine.previewAdvisorGlobalControl(ctx, baseline, nearby);
+  assert.equal(plan.kind, "near-lane-shot");
+  assert.equal(plan.action.dir, "left");
+  assert.equal(plan.action.fire, false);
+  assert.equal(plan.action.hold, true);
+});
+
+test("an aligned point-blank hit may interrupt a farther nonurgent target", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 16, 10, "left");
+  const nearby = enemy(15, 10);
+  const assigned = enemy(7, 17);
+  const ctx = context(defender, [], [assigned, nearby], openMap());
+  ctx.canDirectShoot = (dir, target) => dir === "left" && target === nearby;
+  const baseline = { dir: "down", moveDir: "down", fire: false,
+    hold: false, mode: "core-global-defense-route", target: assigned };
+  const plan = engine.previewAdvisorGlobalControl(ctx, baseline, assigned);
+  assert.equal(plan.kind, "near-lane-shot");
+  assert.equal(plan.action.target, nearby);
+  assert.equal(plan.action.fire, true);
+});
+
+test("a different two-tile target does not steal a committed defense route", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 16, 10, "left");
+  const nearby = enemy(14, 10);
+  const assigned = enemy(7, 17);
+  const ctx = context(defender, [], [assigned, nearby], openMap());
+  ctx.canDirectShoot = (dir, target) => dir === "left" && target === nearby;
+  const baseline = { dir: "down", moveDir: "down", fire: false,
+    hold: false, mode: "core-global-defense-route", target: assigned };
+  const plan = engine.previewAdvisorGlobalControl(ctx, baseline, assigned);
+  assert.notEqual(plan.kind, "near-lane-shot");
+});
+
+test("a verified nearby shot fires without stealing the return-defense lock", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 16, 10, "left");
+  const assigned = enemy(7, 17);
+  const nearby = enemy(14, 10);
+  const ctx = context(defender, [], [assigned, nearby], openMap());
+  ctx.canDirectShoot = (dir, target) => dir === "left" && target === nearby;
+  const baseline = { dir: "down", moveDir: "down", fire: false,
+    hold: false, mode: "core-global-defense-route", target: assigned };
+  const plan = engine.previewAdvisorGlobalControl(ctx, baseline, assigned);
+  assert.equal(plan.kind, "opportunity-shot");
+  assert.equal(plan.action.target, nearby);
+  assert.equal(plan.action.fire, true);
+  assert.equal(plan.lockedTarget, assigned);
+  assert.equal(plan.retarget, null);
+  defender.cooldown = 0.2;
+  assert.notEqual(engine.previewAdvisorGlobalControl(ctx, baseline, assigned).kind, "opportunity-shot");
+});
+
+test("a nearby shot never fires through steel while returning", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 16, 10, "left");
+  const assigned = enemy(7, 17);
+  const nearby = enemy(14, 10);
+  const map = openMap();
+  map[10][15] = "S";
+  const ctx = context(defender, [], [assigned, nearby], map);
+  ctx.canDirectShoot = (dir, target) => dir === "left" && target === nearby;
+  const baseline = { dir: "down", moveDir: "down", fire: false,
+    hold: false, mode: "core-global-defense-route", target: assigned };
+  assert.notEqual(engine.previewAdvisorGlobalControl(ctx, baseline, assigned).kind, "opportunity-shot");
+});
+
+test("a clear flank shot near the base interrupts defense routing after aiming", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 16, 20, "up");
+  const intruder = enemy(13, 20);
+  const ctx = context(defender, [], [intruder], openMap());
+  ctx.canDirectShoot = (dir, target) => dir === "left" && target === intruder;
+  ctx.canShoot = ctx.canDirectShoot;
+  const baseline = { dir: "down", moveDir: "down", fire: false,
+    hold: false, mode: "core-global-defense-route", target: intruder };
+  const aim = engine.previewAdvisorGlobalControl(ctx, baseline, intruder);
+  assert.equal(aim.kind, "base-lane-shot");
+  assert.equal(aim.action.dir, "left");
+  assert.equal(aim.action.fire, false);
+  assert.equal(aim.action.hold, true);
+  defender.dir = "left";
+  const fire = engine.previewAdvisorGlobalControl(ctx, baseline, intruder);
+  assert.equal(fire.kind, "base-lane-shot");
+  assert.equal(fire.action.fire, true);
+  assert.equal(fire.action.target, intruder);
+});
+
+test("a guard brick or rejected direct hit never becomes a forced base-side shot", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 13, 20, "down");
+  const intruder = enemy(13, 22);
+  const map = openMap();
+  map[21][13] = "B";
+  const ctx = context(defender, [], [intruder], map);
+  ctx.canDirectShoot = (dir) => dir === "down";
+  ctx.canShoot = ctx.canDirectShoot;
+  const baseline = { dir: "right", moveDir: "right", fire: false,
+    hold: false, mode: "core-global-defense-route", target: intruder };
+  assert.notEqual(engine.previewAdvisorGlobalControl(ctx, baseline, intruder).kind, "base-lane-shot");
+  map[21][13] = ".";
+  ctx.canDirectShoot = () => false;
+  assert.notEqual(engine.previewAdvisorGlobalControl(ctx, baseline, intruder).kind, "base-lane-shot");
+});
+
+test("a confirmed flank hit beside guard bricks fires despite pessimistic motion prediction", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 16, 20, "left");
+  const intruder = enemy(14, 20);
+  intruder.dir = "down";
+  const map = openMap();
+  map[21][14] = "B";
+  const ctx = context(defender, [], [intruder], map);
+  ctx.canDirectShoot = (dir, target) => dir === "left" && target === intruder;
+  ctx.canShoot = () => false;
+  const baseline = { dir: "down", moveDir: "down", fire: false,
+    hold: false, mode: "core-global-defense-route", target: intruder };
+  const plan = engine.previewAdvisorGlobalControl(ctx, baseline, intruder);
+  assert.equal(plan.kind, "base-lane-shot");
+  assert.equal(plan.action.fire, true);
+  assert.equal(plan.action.target, intruder);
+  assert.equal(map[21][14], "B");
+});
+
+test("a cleared guard opening is traversable while intact protection remains closed", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 10, 21, "right");
+  const map = Array.from({ length: 24 }, () => Array(26).fill("S"));
+  for (let x = 10; x <= 15; x++) map[21][x] = ".";
+  map[22][12] = "E";
+  const ctx = context(defender, [], [], map);
+  const goals = [{ x: 15, y: 21 }];
+  assert.deepEqual(Array.from(engine.previewRelocationPath(ctx, goals), (cell) => cell.x),
+    [10, 11, 12, 13, 14, 15]);
+  map[21][12] = "B";
+  assert.equal(engine.previewRelocationPath(ctx, goals).length, 0);
+  map[21][12] = "E";
+  assert.equal(engine.previewRelocationPath(ctx, goals).length, 0);
+});
+
+test("2P changes position instead of waiting after a protected brick blocks close fire", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 10, 21, "right");
+  const intruder = enemy(13, 21);
+  const map = openMap();
+  map[21][11] = "B";
+  map[22][12] = "E";
+  const ctx = context(defender, [], [intruder], map);
+  const action = { dir: "right", fire: true, hold: true,
+    mode: "core-attack-fire", target: intruder };
+  const revised = engine.previewGuardFireGate(ctx, action);
+  assert.equal(revised.mode, "core-guard-shot-reposition");
+  assert.equal(revised.fire, false);
+  assert.equal(revised.hold, false);
+  assert.notEqual(revised.moveDir, "right");
+  assert.ok(ctx.plannedRoute?.length > 1);
+  assert.equal(map[21][11], "B");
+});
+
+test("2P replans an obsolete intercept when an intruder reaches the base", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 16, 18, "right");
+  const intruder = enemy(14, 21);
+  const ctx = context(defender, [], [intruder], openMap());
+  const threat = { enemy: intruder, crossed: true, defenseTier: 1,
+    dangerEta: 1, responseDeadline: 1, baseDistance: TILE * 3 };
+  ctx.globalThreats = [threat];
+  ctx.globalDirective = { target: intruder, threat, mission: { plan: {
+    path: [{ x: 16, y: 18 }, { x: 17, y: 18 }, { x: 18, y: 18 }],
+  } } };
+  const plan = engine.previewAdvisorReliableReturn(ctx, {
+    dir: "right", moveDir: "right", fire: false, hold: false,
+    mode: "core-chase", target: intruder,
+  });
+  assert.ok(plan);
+  assert.notDeepEqual(plan.route?.at(-1), { x: 18, y: 18 });
+  assert.ok(Math.abs(plan.route.at(-1).x - 14) + Math.abs(plan.route.at(-1).y - 21) <= 2);
+  assert.equal(plan.action.target, intruder);
+});
+
+test("an ally beside a sealed lower-center screen approaches the base side instead of holding", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 9, 18, "right");
+  const intruder = enemy(12, 19, "fast");
+  const map = openMap();
+  for (let x = 10; x <= 15; x++) map[18][x] = "B";
+  for (const x of [10, 11, 14, 15]) {
+    map[19][x] = "S";
+    map[20][x] = "B";
+  }
+  for (let x = 11; x <= 14; x++) map[21][x] = "B";
+  map[22][12] = "E";
+  const ctx = context(defender, [], [intruder], map);
+  const threat = { enemy: intruder, crossed: true, defenseTier: 1,
+    dangerEta: 1, responseDeadline: 1, baseDistance: TILE * 3 };
+  ctx.globalThreats = [threat];
+  ctx.globalDirective = { target: intruder, threat };
+  const plan = engine.previewAdvisorReliableReturn(ctx, {
+    dir: "right", moveDir: "right", fire: false, hold: false,
+    mode: "core-chase", target: intruder,
+  });
+  assert.ok(plan?.route?.length > 1);
+  assert.equal(plan.action.moveDir, "down");
+  assert.equal(plan.action.hold, false);
+  assert.ok(plan.route.every((cell) => map[cell.y][cell.x] !== "S"
+    && !engine.previewProtectedDefenseBrick(ctx, cell.x, cell.y)));
+});
+
+test("a moving ally avoids entering a ready enemy's unobstructed firing lane", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 7, 5, "right");
+  const shooter = enemy(8, 3);
+  const ctx = context(defender, [], [shooter], openMap());
+  const action = { dir: "right", moveDir: "right", fire: false, hold: false,
+    mode: "core-chase", target: shooter };
+  const revised = engine.previewEnemyMuzzleMoveGate(ctx, action);
+  assert.equal(revised.mode, "core-muzzle-lane-detour");
+  assert.equal(revised.dir, "up");
+  assert.equal(revised.fire, false);
+  assert.equal(revised.hold, false);
+});
+
+test("a distant muzzle lane cannot interrupt pursuit before the ally reaches it", () => {
+  const engine = loadEngine();
+  const defender = tank("player2", 5, 5, "right");
+  const shooter = enemy(8, 3);
+  const ctx = context(defender, [], [shooter], openMap());
+  const action = { dir: "right", moveDir: "right", fire: false, hold: false,
+    mode: "core-chase", target: shooter };
+  assert.equal(engine.previewEnemyMuzzleMoveGate(ctx, action), action);
+});
+
+test("cover, reload and freeze make a projected enemy firing lane safe to cross", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 7, 5, "right");
+  const shooter = enemy(8, 3);
+  const map = openMap();
+  const ctx = context(defender, [], [shooter], map);
+  const action = { dir: "right", moveDir: "right", fire: false, hold: false,
+    mode: "core-chase", target: shooter };
+  map[4][8] = "S";
+  assert.equal(engine.previewEnemyMuzzleMoveGate(ctx, action), action);
+  map[4][8] = ".";
+  shooter.cooldown = 1.2;
+  assert.equal(engine.previewEnemyMuzzleMoveGate(ctx, action), action);
+  shooter.cooldown = 0;
+  ctx.freezeTime = 2;
+  assert.equal(engine.previewEnemyMuzzleMoveGate(ctx, action), action);
+});
+
+test("an ally already on a firing lane may keep its verified lethal shot", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 5, 5, "right");
+  const shooter = enemy(8, 5);
+  shooter.dir = "left";
+  shooter.cooldown = 0.45;
+  const ctx = context(defender, [], [shooter], openMap());
+  ctx.canDirectShoot = (dir, target) => dir === "right" && target === shooter;
+  const action = { dir: "right", moveDir: "right", fire: true, hold: false,
+    mode: "core-contact-fire", target: shooter };
+  assert.equal(engine.previewEnemyMuzzleMoveGate(ctx, action), action);
 });
 
 test("urgent defense assignment uses route response time and can interrupt a weaker commitment", () => {
@@ -1602,6 +2246,20 @@ test("a direct base shooter becomes a terminal mission instead of an early inter
   assert.equal(mission.plan?.terminal, true);
 });
 
+test("terminal defense favors an on-time kill, but shields when every shot is late", () => {
+  const engine = loadEngine();
+  const onTime = { reserved: false, deadlineSpare: 0.1, shieldSide: false, killEta: 1,
+    shieldDepth: 0 };
+  const lateShield = { reserved: false, deadlineSpare: -0.1, shieldSide: true, killEta: 1.2,
+    shieldDepth: 32 };
+  const lateOpen = { reserved: false, deadlineSpare: -0.05, shieldSide: false, killEta: 1.15,
+    shieldDepth: 0 };
+  assert.deepEqual(Array.from(engine.previewTerminalCandidateOrder([lateShield, onTime])),
+    [onTime, lateShield]);
+  assert.deepEqual(Array.from(engine.previewTerminalCandidateOrder([lateOpen, lateShield])),
+    [lateShield, lateOpen]);
+});
+
 test("two defenders sharing one terminal threat receive different firing cells", () => {
   const engine = loadEngine();
   const p1 = tank("player", 9, 18, "up");
@@ -1617,6 +2275,87 @@ test("two defenders sharing one terminal threat receive different firing cells",
   assert.equal(second?.phase, "TERMINAL");
   assert.ok(first?.goal && second?.goal);
   assert.notEqual(`${first.goal.x},${first.goal.y}`, `${second.goal.x},${second.goal.y}`);
+});
+
+test("separate base intruders do not send both defenders to one firing cell", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 10, 18, "up");
+  const p2 = tank("player2", 15, 18, "up");
+  const left = enemy(11, 20);
+  const right = enemy(14, 20);
+  const ctx = context(p1, [p2], [left, right], openMap());
+  const state = engine.previewGlobalBattle(ctx, 10);
+  const first = state.assignments.get(p1)?.mission;
+  const second = state.assignments.get(p2)?.mission;
+  assert.notEqual(first?.target, second?.target);
+  assert.ok(first?.goal && second?.goal);
+  assert.notEqual(`${first.goal.x},${first.goal.y}`, `${second.goal.x},${second.goal.y}`);
+});
+
+test("two pressured flanks keep one defender per side even with two left intruders", () => {
+  for (const [leftY, secondY, rightY] of [
+    [20, 19, 19], [21, 20, 18], [20, 20, 16], [20, 19, 13],
+  ]) {
+    const engine = loadEngine();
+    const p1 = tank("player", 10, 17, "up");
+    const p2 = tank("player2", 16, 17, "up");
+    const leftNear = enemy(10, leftY, "fast");
+    const leftSecond = enemy(11, secondY);
+    const right = enemy(17, rightY, "fast");
+    const ctx = context(p1, [p2], [leftNear, leftSecond, right], openMap());
+    const state = engine.previewGlobalBattle(ctx, 10);
+    assert.equal(state.assignments.get(p1)?.target, leftNear);
+    assert.equal(state.assignments.get(p2)?.target, right,
+      `y=${leftY},${secondY},${rightY} 2P=${state.assignments.get(p2)?.target?.x}`);
+  }
+});
+
+test("a right-lane intruder gets coverage after both defenders drift left", () => {
+  for (const p2X of [8, 12]) {
+    for (const rightY of [15, 19]) {
+      const engine = loadEngine();
+      const p1 = tank("player", 8, 16, "up");
+      const p2 = tank("player2", p2X, 16, "up");
+      const leftNear = enemy(9, 19, "fast");
+      const leftSecond = enemy(10, 18);
+      const right = enemy(18, rightY, "fast");
+      const ctx = context(p1, [p2], [leftNear, leftSecond, right], openMap());
+      const state = engine.previewGlobalBattle(ctx, 10);
+      assert.ok([state.assignments.get(p1)?.target, state.assignments.get(p2)?.target].includes(right),
+        `p2X=${p2X} rightY=${rightY} 1P=${state.assignments.get(p1)?.target?.x} 2P=${state.assignments.get(p2)?.target?.x}`);
+    }
+  }
+});
+
+test("new right-lane pressure releases the right defender's left-side commitment", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 8, 17, "up");
+  const p2 = tank("player2", 12, 17, "up");
+  const leftNear = enemy(9, 20, "fast");
+  const leftSecond = enemy(10, 18);
+  const right = enemy(17, 18, "fast");
+  const map = openMap();
+  const ctx = context(p1, [p2], [leftNear, leftSecond], map);
+  const initial = engine.previewGlobalBattle(ctx, 10);
+  assert.ok(initial.assignments.get(p2)?.target);
+  ctx.enemies.push(right);
+  const updated = engine.previewGlobalBattle(ctx, 10.01);
+  assert.equal(updated.assignments.get(p1)?.target, leftNear);
+  assert.equal(updated.assignments.get(p2)?.target, right);
+});
+
+test("mission separation yields only to a reachable near-equal on-time firing cell", () => {
+  const engine = loadEngine();
+  const primary = { plan: { cell: { x: 12, y: 17 }, killEta: 1.2 } };
+  const alternate = { plan: { cell: { x: 14, y: 17 }, killEta: 1.4 } };
+  const occupied = ["12,17"];
+  assert.equal(engine.previewMissionSeparation(primary, alternate, occupied, 2.2), alternate);
+  assert.equal(engine.previewMissionSeparation(primary, alternate, occupied, 2), primary,
+    "do not trade an urgent base deadline for spacing");
+  assert.equal(engine.previewMissionSeparation(primary,
+    { plan: { cell: { x: 14, y: 17 }, killEta: 1.6 } }, occupied, 3), primary,
+  "do not send a defender on a slower detour");
+  assert.equal(engine.previewMissionSeparation(primary, alternate, ["14,17"], 3), primary);
 });
 
 test("two defenders sharing the final distant enemy reserve different intercept cells", () => {
@@ -1644,6 +2383,17 @@ test("defense route progress uses real sub-tile movement rather than only cell c
   defender.y += 12;
   const after = engine.previewDefenseRouteMetric(defender, route);
   assert.ok(after < before - 8, `${before}:${after}`);
+});
+
+test("entering the final route cell does not falsely finish physical alignment", () => {
+  const engine = loadEngine();
+  const defender = tank("player", 5, 5, "down");
+  const route = [{ x: 5, y: 4 }, { x: 5, y: 5 }];
+  defender.y -= 10;
+  const before = engine.previewDefenseRouteMetric(defender, route);
+  assert.ok(before >= 10);
+  defender.y += 10;
+  assert.ok(engine.previewDefenseRouteMetric(defender, route) < before);
 });
 
 test("a defense route that makes no physical progress is replaced within one second", () => {
@@ -1716,6 +2466,59 @@ test("near-base terminal combat preserves separate ally assignments", () => {
   const a2 = engine.createController("2P").decide(second);
   assert.notEqual(a1.lockedTarget, a2.lockedTarget);
   assert.deepEqual(new Set([a1.lockedTarget, a2.lockedTarget]), new Set([left, right]));
+});
+
+test("three simultaneous lower-lane intruders keep distinct defender targets", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 10, 17, "up");
+  const p2 = tank("player2", 15, 17, "left");
+  const basic = enemy(10, 21);
+  const armor = enemy(11, 20, "armor");
+  armor.hp = 2;
+  const fast = enemy(17, 19, "fast");
+  const map = openMap();
+  const first = engine.createController("1P").decide(context(p1, [p2], [basic, armor, fast], map));
+  p1.attackTarget = first.lockedTarget;
+  const secondCtx = context(p2, [p1], [basic, armor, fast], map);
+  secondCtx.gameTime = 1.01;
+  const second = engine.createController("2P").decide(secondCtx);
+  assert.notEqual(first.lockedTarget, second.lockedTarget,
+    `1P=${first.mode}:${first.lockedTarget?.kind} 2P=${second.mode}:${second.lockedTarget?.kind}`);
+});
+
+test("lower-lane assignments stay separate as three enemies advance", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 10, 17);
+  const p2 = tank("player2", 15, 17);
+  const basic = enemy(10, 21);
+  const armor = enemy(11, 20, "armor");
+  armor.hp = 2;
+  const fast = enemy(17, 19, "fast");
+  fast.speed = 105;
+  const distant = enemy(8, 1, "fast");
+  const map = openMap();
+  const c1 = engine.createController("1P");
+  const c2 = engine.createController("2P");
+  for (const [time, positions] of [
+    [295, [[349, 567], [483, 564], [324, 684], [360, 641], [545, 590], [273, 37]]],
+    [295.5, [[319, 543], [462, 531], [324, 711], [368, 641], [545, 630], [284, 81]]],
+    [296, [[298, 576], [430, 554], [324, 730], [397, 642], [545, 685], [273, 125]]],
+  ]) {
+    for (const [item, point] of [p1, p2, basic, armor, fast, distant].map((item, i) => [item, positions[i]])) {
+      [item.x, item.y] = point;
+    }
+    const ctx1 = context(p1, [p2], [basic, armor, fast, distant], map);
+    ctx1.gameTime = time;
+    const a1 = c1.decide(ctx1);
+    p1.attackTarget = a1.lockedTarget;
+    const ctx2 = context(p2, [p1], [basic, armor, fast, distant], map);
+    ctx2.gameTime = time + 0.01;
+    const a2 = c2.decide(ctx2);
+    p2.attackTarget = a2.lockedTarget;
+    assert.notEqual(a1.lockedTarget, a2.lockedTarget,
+      `${time}: 1P=${a1.mode}:${a1.lockedTarget?.kind}/${ctx1.globalDirective?.target?.kind}`
+      + ` 2P=${a2.mode}:${a2.lockedTarget?.kind}/${ctx2.globalDirective?.target?.kind}`);
+  }
 });
 
 test("a unique base-side intruder receives both defenders before its final shot", () => {
@@ -1982,19 +2785,46 @@ test("an incoming shell is dodged when no reliable counter lane exists", () => {
   assert.equal(action.advisor.participation, "full-control");
 });
 
+test("expiring invulnerability does not hide a shell arriving afterward", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 10, 10, "up");
+  p1.invuln = 0.12;
+  const shooter = enemy(13, 6);
+  const shell = { owner: shooter, enemy: true, x: p1.x + 11, y: p1.y - 100,
+    w: 6, h: 6, dir: "down", speed: 230 };
+  const ctx = context(p1, [], [shooter], openMap());
+  ctx.bullets = [shell];
+  const action = engine.createController("1P").decide(ctx);
+  assert.match(action.mode, /^core-evade-bullet/);
+  assert.equal(action.hold, false);
+});
+
+test("movement forecast compares collision time to remaining invulnerability", () => {
+  const engine = loadEngine();
+  const p1 = tank("player", 8, 10, "right");
+  p1.invuln = 0.15;
+  const shell = { enemy: true, x: p1.x + 50, y: p1.y - 120,
+    w: 6, h: 6, dir: "down", speed: 230 };
+  const ctx = context(p1, [], [], openMap());
+  ctx.bullets = [shell];
+  assert.ok(engine.previewMovementBulletThreat(ctx, "right", 0.9));
+  p1.invuln = 1.1;
+  assert.equal(engine.previewMovementBulletThreat(ctx, "right", 0.9), null);
+});
+
 test("counter-fire safety accepts an enemy shell collision before the shooter", () => {
   const source = fs.readFileSync(path.join(ROOT, "game.js"), "utf8");
   assert.match(source, /function counterBulletShotSafe\(tank, intendedDir\)/);
   assert.match(source, /\^core-counter-\(\?:fire\|aim\|fire-critical\)\$/);
 });
 
-test("an armor target keeps the second shot after the first shot is confirmed", () => {
+test("an armor target stays committed until two actual hits, even after missed shots", () => {
   const engine = loadEngine();
   const controller = engine.createController("1P");
   const p1 = tank("player", 10, 10, "up");
   const p2 = tank("player2", 20, 20);
   const armor = enemy(10, 8, "armor");
-  armor.hp = 2;
+  armor.hp = 4;
   const first = context(p1, [p2], [armor], openMap());
   first.canDirectShoot = (dir, target) => dir === "up" && target === armor;
   const firstAction = controller.decide(first);
@@ -2016,6 +2846,35 @@ test("an armor target keeps the second shot after the first shot is confirmed", 
   assert.equal(secondAction.mode, "core-armor-volley");
   assert.equal(secondAction.lockedTarget, armor);
   assert.equal(secondAction.fire, true);
+
+  p1.cooldown = 0.5;
+  const afterMiss = context(p1, [p2], [armor, distractor], openMap());
+  afterMiss.gameTime = 1.65;
+  afterMiss.canDirectShoot = (dir, target) => dir === "up" && target === armor;
+  assert.equal(controller.decide(afterMiss).lockedTarget, armor);
+
+  p1.cooldown = 0;
+  p1.aiArmorHitEvents = [armor];
+  armor.hp = 3;
+  const afterFirstHit = context(p1, [p2], [armor, distractor], openMap());
+  afterFirstHit.gameTime = 2.2;
+  afterFirstHit.canDirectShoot = (dir, target) => dir === "up" && target === armor;
+  assert.equal(controller.decide(afterFirstHit).lockedTarget, armor);
+
+  p1.aiArmorHitEvents = [armor];
+  armor.hp = 2;
+  const afterSecondHit = context(p1, [p2], [armor, distractor], openMap());
+  afterSecondHit.gameTime = 2.3;
+  afterSecondHit.canDirectShoot = (dir, target) => dir === "up" && target === armor;
+  const released = controller.decide(afterSecondHit);
+  assert.equal(p1.aiArmorHitEvents.length, 0);
+  assert.notEqual(released.mode, "core-armor-volley");
+});
+
+test("game records only real armor damage for the firing ally", () => {
+  const source = fs.readFileSync(path.join(ROOT, "game.js"), "utf8");
+  assert.match(source, /if \(tank\.invuln > 0\) return false;\s*tank\.hp -= 1;\s*if \(tank\.enemy && tank\.kind === "armor"/);
+  assert.match(source, /hits\.push\(tank\)/);
 });
 
 test("game-side direct fire scans with the real six-pixel bullet corridor", () => {

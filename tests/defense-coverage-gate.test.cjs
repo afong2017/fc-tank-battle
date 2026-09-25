@@ -18,12 +18,6 @@ function decision(firstEta, deadline, missed = 0) {
   });
 }
 
-test('runtime accepts both on-time defenders even if the primary response is slower', {
-  todo: 'Gate relaxation regresses real-physics defense; see DEFENSE-COVERAGE-VALIDATION.md.',
-}, () => {
-  assert.equal(decision(2, 3), true);
-});
-
 test('runtime does not sacrifice an on-time primary threat to rescue another', () => {
   assert.equal(decision(4, 3), false);
   assert.equal(decision(2.5, 3), false, 'keep reserve for a full reversal');

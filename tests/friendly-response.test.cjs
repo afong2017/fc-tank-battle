@@ -43,3 +43,45 @@ test('friendly crossing can wait when no route is available and ignores own or d
   bullet.dead = true;
   assert.equal(controller.respond(ctx, tank, bullet, 1, null, true), null);
 });
+
+test('a shell chasing from behind is dodged laterally before a slow U-turn countershot', () => {
+  const { tank, bullet, ctx, controller } = scenario();
+  tank.y = 384;
+  tank.dir = 'down';
+  tank.turnCooldown = 0;
+  bullet.y = 160;
+  bullet.dir = 'down';
+  bullet.speed = 230;
+  bullet.enemy = true;
+  bullet.owner = { x: tank.x, y: 32, w: 28, h: 28, dir: 'down', speed: 72, alive: true };
+  ctx.enemies = [bullet.owner];
+  ctx.canDirectShoot = dir => dir === 'up';
+  ctx.canPredictShoot = dir => dir === 'up';
+  const action = controller.respond(ctx, tank, bullet, 1, null, false);
+  assert.ok(action);
+  assert.equal(action.fire, false);
+  assert.equal(action.hold, false, 'sidestep must move the tank, not only turn it');
+  assert.ok(['left', 'right'].includes(action.dir), `${action.mode}:${action.dir}`);
+  ctx.map = Array.from({ length: 24 }, () => Array(26).fill('.'));
+  ctx.rows = 24;
+  ctx.cols = 26;
+  ctx.stage = 1;
+  ctx.gameTime = 1.01;
+  ctx.baseGuard = { x: 11 * 32, y: 21 * 32, w: 4 * 32, h: 3 * 32 };
+  const live = controller.decide(ctx);
+  assert.equal(live.mode, 'core-evade-bullet-rear');
+  assert.equal(live.fire, false);
+  assert.equal(live.hold, false);
+  assert.ok(['left', 'right'].includes(live.dir));
+  const initialX = tank.x;
+  for (let frame = 0; frame < 8; frame++) {
+    const step = controller.decide(ctx);
+    assert.equal(step.hold, false, `frame ${frame}: ${step.mode}`);
+    assert.equal(step.dir, live.dir, `frame ${frame}: stay committed to the clear side`);
+    tank.x += (step.dir === 'left' ? -1 : 1) * tank.speed / 30;
+    tank.dir = step.dir;
+    bullet.y += bullet.speed / 30;
+    ctx.gameTime += 1 / 30;
+  }
+  assert.ok(Math.abs(tank.x - initialX) >= 24, 'tank leaves the projectile lane');
+});

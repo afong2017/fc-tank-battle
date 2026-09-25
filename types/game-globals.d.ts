@@ -108,6 +108,7 @@ interface TankPartnerAI {
 }
 
 interface FCGameHotAPI {
+  reloadV3Controllers?(): void;
   isHotUpgradeEnabled(): boolean;
   setHotUpgradeEnabled(value: boolean): void;
   reloadAiControllers(): void;
@@ -128,6 +129,7 @@ interface FCHotUpgrade {
 
 interface Window {
   TankPartnerAI?: TankPartnerAI;
+  TankPartnerAIV3?: { createController(name: "1P" | "2P"): AiController };
   TankPartnerAIEngine?: {
     version: string;
     enhance(api: TankPartnerAI): TankPartnerAI;
@@ -136,7 +138,7 @@ interface Window {
   };
   FCGameHotAPI?: FCGameHotAPI;
   FCHotUpgrade?: FCHotUpgrade;
-  FCHotUpgradeVersion?: { ai?: Record<string, unknown>; game?: Record<string, unknown> };
+  FCHotUpgradeVersion?: { ai?: Record<string, unknown>; game?: Record<string, unknown>; v3?: Record<string, unknown> };
   __TankAIDistanceWorkerCache?: Map<string, unknown>;
   webkitAudioContext?: typeof AudioContext;
 }

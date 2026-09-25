@@ -4,7 +4,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { DatabaseSync } = require("node:sqlite");
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const EVENT_LIMIT = 200000;
 const MATCH_LIMIT = 100000;
 const RUNTIME_EVENT_LIMIT = 2400;
@@ -215,6 +215,13 @@ class AiDatabase {
         created_at INTEGER NOT NULL,
         data_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS v3_base_failures (
+        id TEXT PRIMARY KEY,
+        at INTEGER NOT NULL,
+        stage INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        data_json TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS active_matches (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -234,6 +241,7 @@ class AiDatabase {
       CREATE INDEX IF NOT EXISTS idx_events_match ON events(match_id);
       CREATE INDEX IF NOT EXISTS idx_events_type_kind ON events(type, enemy_kind, created_at);
       CREATE INDEX IF NOT EXISTS idx_events_type_mode ON events(type, mode, created_at);
+      CREATE INDEX IF NOT EXISTS idx_v3_base_failures_at ON v3_base_failures(at DESC);
       CREATE INDEX IF NOT EXISTS idx_active_matches_status ON active_matches(status, last_active_at);
       CREATE INDEX IF NOT EXISTS idx_active_matches_run ON active_matches(run_mode, test_speed, last_active_at);
     `);
@@ -271,6 +279,37 @@ class AiDatabase {
 
   getMeta(key) {
     return this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key)?.value || null;
+  }
+
+  saveV3BaseFailure(failure) {
+    if (!failure || typeof failure.id !== "string" || !/^v3-[a-z0-9-]{10,80}$/.test(failure.id)
+      || !Array.isArray(failure.baseTimeline) || failure.baseTimeline.length > 61) {
+      throw new TypeError("Invalid V3 base failure");
+    }
+    const record = {
+      id: failure.id,
+      at: Math.max(0, Math.floor(Number(failure.at) || Date.now())),
+      stage: Math.max(1, Math.floor(Number(failure.stage) || 1)),
+      time: Math.max(0, Number(failure.time) || 0),
+      reason: String(failure.reason || "unknown").slice(0, 40),
+      bulletDir: failure.bulletDir || null,
+      impactX: Number.isFinite(failure.impactX) ? failure.impactX : null,
+      impactY: Number.isFinite(failure.impactY) ? failure.impactY : null,
+      run: failure.run || null,
+      historySamples: Math.max(0, Math.floor(Number(failure.historySamples) || 0)),
+      historySeconds: Math.max(0, Number(failure.historySeconds) || 0),
+      baseTimeline: failure.baseTimeline,
+    };
+    if (Buffer.byteLength(json(record)) > 256 * 1024) throw new RangeError("V3 base failure too large");
+    this.db.prepare(`INSERT OR IGNORE INTO v3_base_failures(id, at, stage, reason, data_json)
+      VALUES(?, ?, ?, ?, ?)`).run(record.id, record.at, record.stage, record.reason, json(record));
+    return record.id;
+  }
+
+  readV3BaseFailures(limit = 20) {
+    const count = Math.min(100, Math.max(1, Math.floor(Number(limit) || 20)));
+    return this.db.prepare("SELECT data_json FROM v3_base_failures ORDER BY at DESC LIMIT ?")
+      .all(count).map((row) => parse(row.data_json, {}));
   }
 
   setMeta(key, value) {

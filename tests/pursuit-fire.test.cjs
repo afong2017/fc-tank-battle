@@ -23,18 +23,6 @@ function fixture() {
   return { ...sandbox.window.probe, tank, enemy, ctx };
 }
 
-test('aligned pursuit fires during the next-turn cooldown without changing reload', {
-  todo: 'Known delay; early-fire candidates regressed stage 4 seed 42. See PURSUIT-FIRE-VALIDATION.md.',
-}, () => {
-  const { aimedFireAction, tank, enemy, ctx } = fixture();
-  ctx.canMove = () => true;
-  const action = aimedFireAction(ctx, tank, 'down', 'core-contact-fire', enemy, true);
-  assert.equal(action.fire, true);
-  assert.equal(action.hold, false, 'continue straight while firing');
-  tank.cooldown = 0.2;
-  assert.equal(aimedFireAction(ctx, tank, 'down', 'core-contact-fire', enemy, true).fire, false);
-});
-
 test('blocked pursuit does not bypass aim handling during turn cooldown', () => {
   const { aimedFireAction, tank, enemy, ctx } = fixture();
   ctx.canMove = () => true;

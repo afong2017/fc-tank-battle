@@ -48,6 +48,13 @@
               <span>HOT UP</span>
               <strong id="hotUpgradeValue">ON</strong>
             </label>
+            <div id="aiVersionOption" class="menu-option ai-version-option">
+              <span>AI VERSION</span>
+              <div class="ai-version-picker" role="group" aria-label="选择 AI 版本">
+                <button id="aiCoreOption" type="button" aria-pressed="true">CORE</button>
+                <button id="aiV3Option" type="button" aria-pressed="false">V3 TEST</button>
+              </div>
+            </div>
           </div>
           <button id="startButton" class="start-button" type="button">START</button>
           <p id="overlayHelp" class="small">1P 方向键/WASD + Space，2P IJKL + U；无人操作会由 AI 托管</p>
@@ -154,6 +161,7 @@
     <script src="best-runs-ui.js"></script>
     <script src="ai-core.js"></script>
     <script src="ai-data.js"></script>
+    <script src="ai-v3.js"></script>
     <script src="game.js"></script>
     <script src="hot-upgrade.js"></script>
   </body>

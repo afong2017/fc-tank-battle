@@ -96,7 +96,8 @@ function bundleInfo(names) {
 function versionPayload() {
   const ai = { ...bundleInfo(AI_FILES), file: "ai-data.js", ...AI_META };
   const game = bundleInfo(GAME_FILES);
-  return JSON.stringify({ ai, game, pollSeconds: 5 });
+  const v3 = fileInfo("ai-v3.js");
+  return JSON.stringify({ ai, game, v3, pollSeconds: 5 });
 }
 
 function readJsonBody(req) {
@@ -214,6 +215,27 @@ const server = http.createServer(async (req, res) => {
       });
       res.end(JSON.stringify(liveReport(aiDatabase.db)));
       return;
+    }
+
+    if (pathname === "/ai-v3/base-failures") {
+      const origin = req.headers.origin;
+      if (origin && origin !== `http://${req.headers.host}`) {
+        res.writeHead(403); res.end("Origin denied"); return;
+      }
+      if (req.method === "GET") {
+        const requestUrl = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ failures: aiDatabase.readV3BaseFailures(Number(requestUrl.searchParams.get("limit"))) }));
+        return;
+      }
+      if (req.method === "POST") {
+        const failure = await readJsonBody(req);
+        const id = aiDatabase.saveV3BaseFailure(failure);
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ ok: true, id }));
+        return;
+      }
+      res.writeHead(405); res.end("Method not allowed"); return;
     }
 
     if (req.url.startsWith("/ai-memory")) {

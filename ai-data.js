@@ -473,9 +473,17 @@
       ...compact(tank),
       mode: tank.mode || null,
       target: compact(tank.target),
+      fireRequested: Boolean(tank.fireRequested),
+      fireCooldown: Math.max(0, Number(tank.fireCooldown) || 0),
+      turnCooldown: Math.max(0, Number(tank.turnCooldown) || 0),
+      shot: tank.shot ? {
+        time: Math.max(0, Number(tank.shot.time) || 0),
+        dir: tank.shot.dir || null,
+        result: tank.shot.result || null,
+      } : null,
     } : null;
-    return value.slice(-21).map((snapshot) => ({
-      time: Math.round((Number(snapshot?.time) || 0) * 10) / 10,
+    return value.slice(-61).map((snapshot) => ({
+      time: Math.round((Number(snapshot?.time) || 0) * 100) / 100,
       freeze: Math.round((Number(snapshot?.freeze) || 0) * 10) / 10,
       p1: compactTank(snapshot?.p1),
       p2: compactTank(snapshot?.p2),

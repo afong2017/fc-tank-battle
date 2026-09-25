@@ -14,6 +14,7 @@
   const COMBAT_POLICY = Object.freeze({ defend: 6.5, survive: 5, attack: 7, clear: 4 });
   const directBaseShotCaches = new WeakMap();
   const baseDirectFireGoalCaches = new WeakMap();
+  const baseDangerFieldCaches = new WeakMap();
   const baseThreatPathCaches = new WeakMap();
   const interceptEnemyPathCaches = new WeakMap();
   const baseProjectileInterceptCaches = new WeakMap();
@@ -730,10 +731,8 @@
     if (x < 0 || y < 0 || x >= ctx.cols || y >= ctx.rows) return Infinity;
     if (ctx.aiAvoidCell?.x === x && ctx.aiAvoidCell?.y === y) return Infinity;
     const tile = ctx.tileAt?.(x, y) ?? ctx.map?.[y]?.[x] ?? "S";
-    // Base guard cells are a hard exclusion zone; no pursuit mode may route through them.
-    if (isGuardCell(ctx, x, y)) return Infinity;
-    // Keep the lower center screen intact. Once an enemy destroys a brick,
-    // this predicate becomes false and the opened cell is immediately usable.
+    // Keep intact guard tiles closed, but use openings after an enemy removes them.
+    if (isGuardCell(ctx, x, y) && tile === "E") return Infinity;
     if (tile === "B" && isProtectedDefenseBrick(ctx, x, y)) return Infinity;
     const boundaryPenalty = sideRoutePenalty(ctx, x);
     if (!Number.isFinite(boundaryPenalty)) return Infinity;
@@ -907,6 +906,35 @@
       }
     }
     return goals;
+  }
+
+  function baseAttackEntryGoals(ctx) {
+    const guard = ctx.baseGuard;
+    if (!guard) return [];
+    const left = Math.max(0, Math.floor(guard.x / TILE) - 1);
+    const right = Math.min(ctx.cols - 1, Math.floor((guard.x + guard.w - 1) / TILE) + 1);
+    const bottom = Math.min(ctx.rows - 1, Math.floor((guard.y + guard.h - 1) / TILE) + 1);
+    const goals = new Map(baseEntryGoals(ctx).map((cell) => [keyOf(cell.x, cell.y), cell]));
+    const guardLeft = Math.floor(guard.x / TILE);
+    const guardRight = Math.floor((guard.x + guard.w - 1) / TILE);
+    const guardBottom = Math.floor((guard.y + guard.h - 1) / TILE);
+    const openGuardCell = (x, y) => {
+      const tile = ctx.tileAt?.(x, y) ?? ctx.map?.[y]?.[x] ?? "S";
+      return tile === "." || tile === "F";
+    };
+    for (let y = Math.floor(guard.y / TILE); y <= guardBottom; y++) {
+      for (const [x, innerX] of [[left, guardLeft], [right, guardRight]]) {
+        if (openGuardCell(innerX, y) && Number.isFinite(tileCost(ctx, x, y))) {
+          goals.set(keyOf(x, y), { x, y });
+        }
+      }
+    }
+    for (let x = left + 1; x < right; x++) {
+      if (openGuardCell(x, guardBottom) && Number.isFinite(tileCost(ctx, x, bottom))) {
+        goals.set(keyOf(x, bottom), { x, y: bottom });
+      }
+    }
+    return [...goals.values()];
   }
 
   function baseEmergencyFlankGoals(ctx, target) {
@@ -1087,11 +1115,89 @@
           y,
           shotDir: shot.dir,
           flightEta: shot.distance / 310,
+          target: shot.target,
         });
       }
     }
     baseDirectFireGoalCaches.set(cacheOwner, { mapVersion, goals });
     return goals;
+  }
+
+  function baseDangerField(ctx, speed) {
+    const owner = ctx.map || ctx;
+    const mapVersion = Number(ctx.mapVersion || 0);
+    const travelSpeed = Math.max(45, Number(speed) || 72);
+    const clearWeight = policyWeight(ctx, "clear");
+    const key = `${mapVersion}:${ctx.cols}:${ctx.rows}:${travelSpeed}:${clearWeight}`;
+    let cached = baseDangerFieldCaches.get(owner);
+    if (!cached || cached.mapVersion !== mapVersion) {
+      cached = { mapVersion, fields: new Map() };
+      baseDangerFieldCaches.set(owner, cached);
+    }
+    if (cached.fields.has(key)) return cached.fields.get(key);
+    const neutral = { ...ctx, aiSideRole: null, aiAvoidCell: null, ignoreAllyRoutes: true };
+    const distances = new Float64Array(ctx.cols * ctx.rows);
+    distances.fill(Infinity);
+    const heap = [];
+    const push = (index, eta) => {
+      let at = heap.length;
+      heap.push({ index, eta });
+      while (at > 0) {
+        const parent = (at - 1) >> 1;
+        if (heap[parent].eta <= eta) break;
+        heap[at] = heap[parent];
+        at = parent;
+      }
+      heap[at] = { index, eta };
+    };
+    const pop = () => {
+      const first = heap[0];
+      const last = heap.pop();
+      if (heap.length) {
+        let at = 0;
+        while (at * 2 + 1 < heap.length) {
+          let child = at * 2 + 1;
+          if (child + 1 < heap.length && heap[child + 1].eta < heap[child].eta) child++;
+          if (heap[child].eta >= last.eta) break;
+          heap[at] = heap[child];
+          at = child;
+        }
+        heap[at] = last;
+      }
+      return first;
+    };
+    for (const goal of baseDirectFireGoals(neutral)) {
+      const tile = neutral.tileAt?.(goal.x, goal.y) ?? neutral.map?.[goal.y]?.[goal.x] ?? "S";
+      if (tile !== "." && tile !== "F") continue;
+      const index = goal.y * ctx.cols + goal.x;
+      const eta = goal.flightEta + (goal.target === "guard" ? 0.55 : 0);
+      if (eta < distances[index]) {
+        distances[index] = eta;
+        push(index, eta);
+      }
+    }
+    while (heap.length) {
+      const { index, eta } = pop();
+      if (eta !== distances[index]) continue;
+      const x = index % ctx.cols;
+      const y = Math.floor(index / ctx.cols);
+      const tile = neutral.tileAt?.(x, y) ?? neutral.map?.[y]?.[x] ?? "S";
+      const stepEta = TILE * tileCost(neutral, x, y) / travelSpeed
+        + (tile === "B" ? 0.35 : 0);
+      for (const dir of DIR_NAMES) {
+        const nextX = x + DIRS[dir].x;
+        const nextY = y + DIRS[dir].y;
+        if (!Number.isFinite(tileCost(neutral, nextX, nextY))) continue;
+        const next = nextY * ctx.cols + nextX;
+        const nextEta = eta + stepEta;
+        if (nextEta >= distances[next]) continue;
+        distances[next] = nextEta;
+        push(next, nextEta);
+      }
+    }
+    const field = { distances, cols: ctx.cols, rows: ctx.rows };
+    cached.fields.set(key, field);
+    return field;
   }
 
   function estimatedDirectBaseAttackEta(ctx, enemy) {
@@ -1123,7 +1229,7 @@
       cached = {
         key,
         path: findPath({ ...ctx, aiSideRole: null, aiAvoidCell: null, ignoreAllyRoutes: true }, enemyStart,
-          baseEntryGoals({ ...ctx, aiSideRole: null, aiAvoidCell: null, ignoreAllyRoutes: true })),
+          baseAttackEntryGoals({ ...ctx, aiSideRole: null, aiAvoidCell: null, ignoreAllyRoutes: true })),
       };
       interceptEnemyPathCaches.set(enemy, cached);
     }
@@ -1503,6 +1609,8 @@
       baseThreatPathCaches.set(enemy, pathMetrics);
     }
     const { baseRoute, routeEta, attackEta } = pathMetrics;
+    const field = baseDangerField(ctx, enemy.speed);
+    const fieldEta = field.distances[enemyCell.y * field.cols + enemyCell.x] ?? Infinity;
     const geometricEta = baseThreatEta(ctx, enemy);
     const credibleEta = Math.min(routeEta, attackEta);
     const dangerEta = direct
@@ -1528,6 +1636,7 @@
       baseRoute,
       routeEta,
       attackEta,
+      fieldEta,
       geometricEta,
       dangerEta,
       baseDistance,
@@ -1663,6 +1772,8 @@
       : 0;
     const defendGain = Math.max(0.75, Math.min(1.35, 1 + policyBias(ctx, "defend") * 0.07));
     const attackGain = Math.max(0.82, Math.min(1.25, 1 + policyBias(ctx, "attack") * 0.045));
+    const mapPressure = threat.defenseTier >= 3 && Number.isFinite(threat.fieldEta)
+      ? -Math.max(0, 9 - threat.fieldEta) * 35 : 0;
     const latePenalty = Number.isFinite(responseEta)
       ? Math.max(0, responseEta - threat.responseDeadline) * 50000 * defendGain
       : 250000;
@@ -1672,7 +1783,16 @@
       + localDistance * 0.72 * attackGain
       + Math.min(30, responseEta) * 1800 * defendGain
       + latePenalty
+      + mapPressure
       + sidePenalty;
+  }
+
+  function protectsNearBaseCommit(committed, selected) {
+    if (!committed?.enemy?.alive || !selected?.enemy?.alive || selected.enemy === committed.enemy
+      || !committed.crossed || committed.baseDistance > TILE * 5.5
+      || selected.baseDistance < committed.baseDistance + TILE * 3) return false;
+    return selected.direct?.target !== "base"
+      || selected.direct.eta + 0.25 >= committed.dangerEta;
   }
 
   // Compare whole-team deadline coverage, not a sequence of greedy selections.
@@ -1776,12 +1896,16 @@
         ...shield,
       });
     }
-    return candidates.sort((a, b) => Number(a.reserved) - Number(b.reserved)
-      || Number(b.shieldSide) - Number(a.shieldSide)
+    return candidates.sort(compareTerminalEngagementCandidates)[0] || null;
+  }
+
+  function compareTerminalEngagementCandidates(a, b) {
+    return Number(a.reserved) - Number(b.reserved)
       || Number(b.deadlineSpare >= 0) - Number(a.deadlineSpare >= 0)
+      || Number(b.shieldSide) - Number(a.shieldSide)
       || b.deadlineSpare - a.deadlineSpare
       || a.killEta - b.killEta
-      || b.shieldDepth - a.shieldDepth)[0] || null;
+      || b.shieldDepth - a.shieldDepth;
   }
 
   function buildDefenseMission(ctx, ally, threat, reservedCells = new Set()) {
@@ -1807,6 +1931,20 @@
         : defenderResponseEta(ctx, ally, threat),
       terminal: phase === "TERMINAL",
     };
+  }
+
+  function chooseSeparatedMission(primary, alternate, occupiedCells, deadline) {
+    const primaryCell = primary?.plan?.cell;
+    const alternateCell = alternate?.plan?.cell;
+    if (!primaryCell || !alternateCell
+      || !occupiedCells.has(keyOf(primaryCell.x, primaryCell.y))
+      || occupiedCells.has(keyOf(alternateCell.x, alternateCell.y))) return primary;
+    const primaryEta = Number(primary.plan.killEta ?? primary.plan.readyEta);
+    const alternateEta = Number(alternate.plan.killEta ?? alternate.plan.readyEta);
+    return Number.isFinite(primaryEta) && Number.isFinite(alternateEta)
+      && alternateEta <= primaryEta + 0.25
+      && alternateEta + 0.7 <= Number(deadline)
+      ? alternate : primary;
   }
 
   function analyzeGlobalBattle(ctx, now) {
@@ -2030,9 +2168,14 @@
         continue;
       }
       const currentOwner = allies.find((ally) => desired.get(ally)?.enemy === threat.enemy);
+      const priorOwner = allies.find((ally) => previous.get(ally)?.target === threat.enemy);
+      const responseReserve = threat.direct?.target === "base" ? 1.1 : 0.8;
+      const onTimeOwner = priorOwner && !protectedCoverage.has(priorOwner)
+        && defenderResponseEta(ctx, priorOwner, threat) + responseReserve <= threat.responseDeadline
+        ? priorOwner : null;
       const owner = useJointCoverage
         ? allies[jointCoverage.owners[criticalCoverage.indexOf(threat)]]
-        : allies.filter((ally) => !protectedCoverage.has(ally))
+        : onTimeOwner || allies.filter((ally) => !protectedCoverage.has(ally))
           .sort((a, b) => globalAssignmentCost(ctx, a, threat) - globalAssignmentCost(ctx, b, threat))[0];
       if (!owner) continue;
       if (owner !== currentOwner) {
@@ -2045,6 +2188,52 @@
       if (previous.get(owner)?.target !== threat.enemy) coverageEmergencyEnemies.add(threat.enemy);
       protectedCoverage.add(owner);
     }
+    // Deadline coverage can place both defenders on one flank after a new
+    // enemy appears. Keep one live response on each pressured side unless
+    // the departing defender is stopping an imminent direct base shot.
+    if (allies.length === 2 && threats.length > 1) {
+      const flankPressure = (threat) => threat.defenseTier <= 2 || threat.crossed
+        || (threat.fast && threat.dangerEta <= 7.2);
+      const [leftAlly, rightAlly] = allies;
+      const leftChoice = desired.get(leftAlly);
+      const rightChoice = desired.get(rightAlly);
+      if (leftChoice && rightChoice && flankPressure(leftChoice) && flankPressure(rightChoice)
+        && !onAssignedSide(ctx, leftAlly, leftChoice.enemy)
+        && !onAssignedSide(ctx, rightAlly, rightChoice.enemy)
+        && onAssignedSide(ctx, leftAlly, rightChoice.enemy)
+        && onAssignedSide(ctx, rightAlly, leftChoice.enemy)) {
+        const currentEtas = [defenderResponseEta(ctx, leftAlly, leftChoice),
+          defenderResponseEta(ctx, rightAlly, rightChoice)];
+        const homeEtas = [defenderResponseEta(ctx, leftAlly, rightChoice),
+          defenderResponseEta(ctx, rightAlly, leftChoice)];
+        const currentMissed = Number(currentEtas[0] > leftChoice.responseDeadline)
+          + Number(currentEtas[1] > rightChoice.responseDeadline);
+        const homeMissed = Number(homeEtas[0] > rightChoice.responseDeadline)
+          + Number(homeEtas[1] > leftChoice.responseDeadline);
+        if (homeMissed <= currentMissed
+          && Math.max(...homeEtas) + 0.35 < Math.max(...currentEtas)) {
+          desired.set(leftAlly, rightChoice);
+          desired.set(rightAlly, leftChoice);
+          coverageEmergencyEnemies.add(leftChoice.enemy);
+          coverageEmergencyEnemies.add(rightChoice.enemy);
+        }
+      }
+      for (const ally of allies) {
+        const partner = allies.find((candidate) => candidate !== ally);
+        const current = desired.get(ally);
+        const partnerTarget = desired.get(partner);
+        const ownPressure = threats.filter((threat) =>
+          onAssignedSide(ctx, ally, threat.enemy) && flankPressure(threat));
+        if (!ownPressure.length || !current || !partnerTarget
+          || onAssignedSide(ctx, ally, current.enemy)
+          || onAssignedSide(ctx, ally, partnerTarget.enemy)
+          || (current.direct?.target === "base" && current.direct.eta <= 1.1)) continue;
+        const ownTarget = ownPressure.sort((a, b) =>
+          globalAssignmentCost(ctx, ally, a) - globalAssignmentCost(ctx, ally, b))[0];
+        desired.set(ally, ownTarget);
+        coverageEmergencyEnemies.add(ownTarget.enemy);
+      }
+    }
     // Three tiles remains an unconditional pickup. Beyond that range, the only
     // tank covering one of the fastest base approaches may not leave its lane.
     if (pickupDuty?.routeLength > 3) {
@@ -2054,6 +2243,7 @@
 
     const assignments = new Map();
     const missionReservations = new Map();
+    const occupiedFiringCells = new Set();
     const priorOwners = new Map();
     for (const ally of allies) {
       const priorTarget = previous.get(ally)?.target;
@@ -2092,11 +2282,14 @@
         && !onAssignedSide(ctx, ally, prior.target));
       const hardCommitted = Boolean(prior?.hardCommit && prior.target?.alive
         && !releaseDuplicate && !priorOffSide);
-      if (hardCommitted && !(rescuesDeadline && protectedCoverage.has(ally))) {
+      const committedThreat = hardCommitted
+        ? threats.find((threat) => threat.enemy === prior.target) : null;
+      const nearBaseCommit = protectsNearBaseCommit(committedThreat, selected);
+      if (hardCommitted && (nearBaseCommit
+        || !(rescuesDeadline && protectedCoverage.has(ally)))) {
         // Once this ally owns a living enemy, scoring changes must not make it
         // abandon the chase. Movement may still pause for shell evasion or a
         // freeze pickup, but target ownership lasts until the enemy is destroyed.
-        const committedThreat = threats.find((threat) => threat.enemy === prior.target);
         const emergencyOverride = selected?.enemy !== prior.target && Boolean(
           (selected?.defenseTier <= 2
             && (!committedThreat
@@ -2115,7 +2308,7 @@
             && selected.dangerEta + 0.75 < (committedThreat?.dangerEta ?? Infinity))
           || (selected && committedThreat && selected.dangerEta + 1.5 < committedThreat.dangerEta)
         );
-        if (committedThreat && !emergencyOverride) selected = committedThreat;
+        if (committedThreat && (nearBaseCommit || !emergencyOverride)) selected = committedThreat;
       } else if (!(rescuesDeadline && protectedCoverage.has(ally)) && !releaseDuplicate && !pickupCover && !priorOffSide
         && prior?.target?.alive && selected?.enemy !== prior.target && now < prior.commitUntil) {
         const priorThreat = threats.find((threat) => threat.enemy === prior.target);
@@ -2147,15 +2340,21 @@
         ? Math.max(prior.commitUntil, now + 0.45)
         : now + (selected?.direct || selected?.crossed ? 1.15 : 1.65);
       const planningCtx = planningContextForAlly(ctx, ally);
-      const reservedCells = target
-        ? missionReservations.get(target) || new Set()
-        : new Set();
-      const mission = target && selected
-        ? buildDefenseMission(planningCtx, ally, selected, reservedCells)
-        : buildDefenseMission(planningCtx, ally, null, reservedCells);
+      const sameTargetCells = missionReservations.get(target) || new Set();
+      const primaryMission = buildDefenseMission(planningCtx, ally, selected, sameTargetCells);
+      const primaryCell = primaryMission.plan?.cell;
+      let mission = primaryMission;
+      if (target && primaryCell && occupiedFiringCells.has(keyOf(primaryCell.x, primaryCell.y))) {
+        const reservedCells = new Set([...occupiedFiringCells, ...sameTargetCells]);
+        const alternate = buildDefenseMission(planningCtx, ally, selected, reservedCells);
+        mission = chooseSeparatedMission(primaryMission, alternate,
+          occupiedFiringCells, selected.responseDeadline);
+      }
       if (target && mission.plan?.cell) {
-        reservedCells.add(keyOf(mission.plan.cell.x, mission.plan.cell.y));
-        missionReservations.set(target, reservedCells);
+        const cellKey = keyOf(mission.plan.cell.x, mission.plan.cell.y);
+        occupiedFiringCells.add(cellKey);
+        sameTargetCells.add(cellKey);
+        missionReservations.set(target, sameTargetCells);
       }
       const intercept = mission.phase === "INTERCEPT" ? mission.plan : null;
       assignments.set(ally, {
@@ -2270,7 +2469,11 @@
         + Math.abs(center(tank).y - (endpoint.y * TILE + TILE / 2));
     }
     const next = path[index + 1];
-    if (!next) return 0;
+    if (!next) {
+      const endpoint = path[index];
+      return Math.abs(center(tank).x - (endpoint.x * TILE + TILE / 2))
+        + Math.abs(center(tank).y - (endpoint.y * TILE + TILE / 2));
+    }
     const remaining = Math.max(0, path.length - index - 2) * TILE;
     return remaining
       + Math.abs(center(tank).x - (next.x * TILE + TILE / 2))
@@ -2429,7 +2632,48 @@
     if (!action?.fire || !action.dir) return action;
     const obstacle = firstShotObstacle(ctx, ctx.tank, action.dir);
     if (obstacle?.tile !== "E" && !obstacle?.baseGuard) return action;
+    const target = action.target;
+    if (obstacle?.tile === "B" && target?.alive
+      && ctx.canEmergencyCollateralShot?.(action.dir, target)) return action;
+    if (target?.alive && ctx.canDirectShoot?.(action.dir, target)
+      && !firstShotObstacle(ctx, ctx.tank, action.dir, target)) return action;
+    if (target?.alive && isBaseIntruder(ctx, target)) {
+      const routeCtx = { ...ctx, aiSideRole: null };
+      const current = cellOf(ctx.tank);
+      const goals = baseEmergencyMeleeGoals(routeCtx, target).filter((cell) =>
+        cell.x !== current.x || cell.y !== current.y);
+      const path = findPath(routeCtx, current, goals);
+      const step = routeStep(routeCtx, ctx.tank, path, 3.5, target, false);
+      if (step.dir && (step.aligning || routeCtx.canMove?.(step.dir))
+        && !movementBulletThreat(routeCtx, ctx.tank, step.dir, 1.15)) {
+        publishRoute(ctx, ctx.tank, path);
+        return { ...action, dir: step.dir, moveDir: step.dir, moveScale: 1,
+          fire: false, hold: false, mode: "core-guard-shot-reposition" };
+      }
+    }
     return { ...action, fire: false, mode: "core-guard-shot-blocked" };
+  }
+
+  function releaseRejectedAim(ctx, tank, action, now, tracker) {
+    const rejected = action?.mode === "core-aim-turn" && action.fire && action.hold
+      && action.target?.alive && DIRS[action.dir]
+      && typeof ctx.canShoot === "function" && !ctx.canShoot(action.dir, action.target);
+    if (!rejected) {
+      tracker.target = null;
+      return action;
+    }
+    if (tracker.target !== action.target || tracker.dir !== action.dir
+      || Math.abs(tank.x - tracker.x) + Math.abs(tank.y - tracker.y) >= 4) {
+      tracker.target = action.target;
+      tracker.dir = action.dir;
+      tracker.x = tank.x;
+      tracker.y = tank.y;
+      tracker.since = now;
+      return action;
+    }
+    return now - tracker.since >= 0.35
+      ? { ...action, fire: false, mode: "core-aim-turn-recover" }
+      : action;
   }
 
   function blockedShotRecovery(ctx, tank, target, shotDir, obstacle) {
@@ -2498,10 +2742,15 @@
 
     // The bullet starts after the turret finishes turning. Solve the intercept
     // against the moving target instead of truncating prediction at 0.78 s.
-    const interceptTime = (axialNow + 310 * turnDelay) / closingSpeed;
+    const frozenFor = Math.max(0, Number(ctx.freezeTime) || 0);
+    const stationaryImpact = turnDelay + axialNow / 310;
+    const interceptTime = frozenFor >= stationaryImpact
+      ? stationaryImpact
+      : (axialNow + 310 * turnDelay - axialVelocity * frozenFor) / closingSpeed;
     if (!Number.isFinite(interceptTime) || interceptTime < turnDelay || interceptTime > 2.4) return false;
-    const projectedX = targetNow.x + targetDir.x * targetSpeed * interceptTime;
-    const projectedY = targetNow.y + targetDir.y * targetSpeed * interceptTime;
+    const movingTime = Math.max(0, interceptTime - frozenFor);
+    const projectedX = targetNow.x + targetDir.x * targetSpeed * movingTime;
+    const projectedY = targetNow.y + targetDir.y * targetSpeed * movingTime;
     const lateral = dir === "up" || dir === "down"
       ? Math.abs(projectedX - shooter.x)
       : Math.abs(projectedY - shooter.y);
@@ -2641,10 +2890,11 @@
     const keepMoving = Boolean(movementDir && ctx.canMove?.(movementDir)
       && makesUrgentProgress
       && !movementBulletThreat(ctx, tank, movementDir, 0.65));
-    // A held non-fire action does not call the game's facing logic. Requesting a
-    // safe shot turns first; moveTank already preserves the current track direction
-    // during that turn, so applying another 18% scale here incorrectly slows allies.
-    return { dir, moveDir: movementDir, moveScale: 1, fire: !keepMoving, hold: !keepMoving, mode: aimMode, target };
+    // Frozen aim must turn through the hold branch before firing: the game
+    // checks shot safety before fireToward turns, so a rejected shot cannot aim.
+    const frozenAim = (ctx.freezeTime || 0) > 0 && /^core-freeze-/.test(aimMode);
+    const verifiedShot = Boolean(target?.alive && preciseFrozenShot(ctx, tank, target) === dir);
+    return { dir, moveDir: movementDir, moveScale: 1, fire: !keepMoving && (!frozenAim || verifiedShot), hold: !keepMoving, mode: aimMode, target };
   }
 
   function aimedFireAction(ctx, tank, dir, fireMode, target, mobile = false) {
@@ -2964,7 +3214,10 @@
       const guaranteedLane = lateral <= Math.max(8, targetSize / 2 + 2);
       if (!guaranteedLane) return false;
       if (directionFacesBaseZone(ctx, tank, dir) && lateral > Math.max(6, targetSize / 2 - 3)) return false;
-      return !steelBlocksShot(ctx, tank, enemy, dir) && !firstShotObstacle(ctx, tank, dir, enemy);
+      return !steelBlocksShot(ctx, tank, enemy, dir)
+        && !firstShotObstacle(ctx, tank, dir, enemy)
+        && (!directionFacesBaseZone(ctx, tank, dir)
+          || ctx.canDirectShoot?.(dir, enemy) || ctx.canShoot?.(dir, enemy));
     }) || null;
   }
 
@@ -3028,6 +3281,14 @@
     const frozenAlignment = frozenCloseAlignmentDirection(ctx, tank, contact.enemy);
     if (frozenAlignment) {
       return { ...contact, shot: null, predicted: false, approach: frozenAlignment, frozenAlignment: true, breakaway: false };
+    }
+    if (contact.baseIntruder && !contact.pointBlankContact) {
+      const goals = baseEmergencyMeleeGoals(ctx, contact.enemy);
+      const route = goals.length ? findPath(ctx, cellOf(tank), goals) : [];
+      const step = routeStep(ctx, tank, route, 2.5, contact.enemy, false);
+      if (step.dir && (step.aligning || ctx.canMove?.(step.dir))) {
+        return { ...contact, shot: null, predicted: false, approach: step.dir, breakaway: false };
+      }
     }
     const tankCenter = center(tank);
     const enemyCenter = center(contact.enemy);
@@ -3163,6 +3424,59 @@
       || a.distance - b.distance)[0] || null;
   }
 
+  function topScreenPlan(ctx, tank, baseline) {
+    const ally = (ctx.friends || []).find((friend) => friend?.alive);
+    const topLine = Math.floor((ctx.rows || 24) * 0.36);
+    if (!tank?.alive || !ally || cellOf(tank).y > topLine || cellOf(ally).y > topLine
+      || (ctx.freezeTime || 0) > 0 || (baseline?.fire && baseline.target?.alive)
+      || (ctx.enemies || []).some((enemy) => enemy?.alive)
+      || advanceSafetyThreats(ctx).length) return null;
+    const enemies = allVisibleEnemies(ctx);
+    if (enemies.some((enemy) => cellOf(enemy).y >= topLine
+      || manhattan(tank, enemy) < TILE * 4 || manhattan(ally, enemy) < TILE * 4)) return null;
+    const ownLeft = tank.kind === "player";
+    const desiredX = Math.floor((ctx.cols || 26) * (ownLeft ? 0.27 : 0.73));
+    const desiredY = Math.min(topLine - 1, Math.floor((ctx.rows || 24) * (ownLeft ? 0.22 : 0.29)));
+    const allyCell = cellOf(ally);
+    const goals = [];
+    for (let y = Math.max(2, desiredY - 2); y <= Math.min(topLine - 1, desiredY + 2); y++) {
+      for (let x = Math.max(1, desiredX - 3); x <= Math.min(ctx.cols - 2, desiredX + 3); x++) {
+        const tile = ctx.tileAt?.(x, y) ?? ctx.map?.[y]?.[x];
+        if ((tile !== "." && tile !== "F") || Math.abs(x - allyCell.x) < 2
+          || Math.abs(y - allyCell.y) < 1) continue;
+        const probe = { x: x * TILE + 2, y: 0, w: 28, h: 28 };
+        const firingTank = { ...tank, x: x * TILE + 2, y: y * TILE + 2 };
+        if (firstShotObstacle(ctx, firingTank, "up", probe)) continue;
+        goals.push({ x, y });
+      }
+    }
+    goals.sort((a, b) => Math.abs(a.x - desiredX) + Math.abs(a.y - desiredY)
+      - Math.abs(b.x - desiredX) - Math.abs(b.y - desiredY));
+    if (!goals.length) return null;
+    const current = cellOf(tank);
+    const settled = goals.some((goal) => goal.x === current.x && goal.y === current.y);
+    if (!settled) {
+      const path = findPath(ctx, current, goals);
+      const step = routeStep(ctx, tank, path);
+      if (!step.dir || !path.length) return null;
+      const next = path[1];
+      const nextTile = next ? ctx.tileAt?.(next.x, next.y) ?? ctx.map?.[next.y]?.[next.x] : null;
+      if (nextTile === "B" && !step.aligning) {
+        return { action: { ...aimedFireAction(ctx, tank, step.dir, "core-top-screen-clear", null),
+          target: null }, route: path };
+      }
+      if (!step.aligning && !ctx.canMove?.(step.dir)) return null;
+      return { action: { dir: step.dir, moveDir: step.dir, fire: false, hold: false,
+        mode: "core-top-screen-route", target: null }, route: path };
+    }
+    if (tank.dir !== "up" || (tank.turnCooldown || 0) > 0) {
+      return { action: { dir: "up", fire: false, hold: true,
+        mode: "core-top-screen-aim", target: null } };
+    }
+    return { action: { dir: "up", fire: Boolean(ctx.canFire?.()), hold: true,
+      mode: "core-top-screen-fire", target: null } };
+  }
+
   function bulletThreat(ctx, tank, bullet, horizon = 3) {
     const t = center(tank);
     const b = center(bullet);
@@ -3189,13 +3503,12 @@
   }
 
   function incomingBullet(ctx, tank) {
-    if (isInvulnerable(tank)) return null;
     const surviveWeight = policyWeight(ctx, "survive");
     const horizon = Math.max(2.2, Math.min(3.4, 2.1 + surviveWeight * 0.16));
     return (ctx.bullets || []).filter((bullet) => bullet?.enemy && !bullet.dead).map((bullet) => ({
       bullet,
       threat: bulletThreat(ctx, tank, bullet, horizon),
-    })).filter((item) => item.threat)
+    })).filter((item) => item.threat && item.threat.eta + 0.08 >= (Number(tank.invuln) || 0))
       .sort((a, b) => a.threat.eta - b.threat.eta || a.threat.lateral - b.threat.lateral)[0]?.bullet || null;
   }
 
@@ -3208,21 +3521,19 @@
   }
 
   function incomingFriendlyBullet(ctx, tank) {
-    if (isInvulnerable(tank)) return null;
     return (ctx.bullets || []).filter((bullet) =>
       bullet && !bullet.enemy && !bullet.dead && bullet.owner && bullet.owner !== tank
     ).map((bullet) => ({
       bullet,
-      threat: allyFireBlockedByEnemy(ctx, tank, bullet) ? null : bulletThreat(ctx, tank, bullet, 3),
-    })).filter((item) => item.threat)
+      threat: bulletThreat(ctx, tank, bullet, 3),
+    })).filter((item) => item.threat && item.threat.eta + 0.08 >= (Number(tank.invuln) || 0))
       .sort((a, b) => a.threat.eta - b.threat.eta || a.threat.lateral - b.threat.lateral)[0]?.bullet || null;
   }
 
   function incomingAllyFire(ctx, tank) {
-    if (isInvulnerable(tank)) return null;
     return (ctx.allyFireReports || []).map((report) => ({
       report,
-      threat: allyFireBlockedByEnemy(ctx, tank, report) ? null : bulletThreat(ctx, tank, {
+      threat: bulletThreat(ctx, tank, {
         x: report.x,
         y: report.y,
         w: report.w || 6,
@@ -3230,24 +3541,8 @@
         dir: report.dir,
         speed: report.speed || 310,
       }, 2.4),
-    })).filter((item) => item.threat)
+    })).filter((item) => item.threat && item.threat.eta + 0.08 >= (Number(tank.invuln) || 0))
       .sort((a, b) => a.threat.eta - b.threat.eta || a.threat.lateral - b.threat.lateral)[0]?.report || null;
-  }
-
-  function allyFireBlockedByEnemy(ctx, tank, report) {
-    const d = DIRS[report.dir];
-    if (!d) return false;
-    const origin = { x: Number(report.x) + (Number(report.w) || 6) / 2, y: Number(report.y) + (Number(report.h) || 6) / 2 };
-    const tankCenter = center(tank);
-    const tankForward = (tankCenter.x - origin.x) * d.x + (tankCenter.y - origin.y) * d.y;
-    if (tankForward <= 0) return false;
-    return visibleEnemies(ctx).some((enemy) => {
-      const enemyCenter = center(enemy);
-      const forward = (enemyCenter.x - origin.x) * d.x + (enemyCenter.y - origin.y) * d.y;
-      const lateral = d.x === 0 ? Math.abs(enemyCenter.x - origin.x) : Math.abs(enemyCenter.y - origin.y);
-      const halfWidth = d.x === 0 ? (enemy.w || 28) / 2 : (enemy.h || 28) / 2;
-      return forward > 0 && forward < tankForward && lateral <= halfWidth + 5;
-    });
   }
 
   function baseShieldBullet(ctx, tank) {
@@ -3573,12 +3868,13 @@
   }
 
   function projectileRisk(ctx, tank) {
-    if (isInvulnerable(tank)) return 0;
     const t = center(tank);
     let risk = 0;
     for (const bullet of (ctx.bullets || []).filter((item) => item?.enemy && !item.dead)) {
       const threat = bulletThreat(ctx, tank, bullet, 3.4);
-      if (threat) risk += Math.max(8, 420 / (0.12 + threat.eta) + (28 - Math.min(28, threat.lateral)) * 5);
+      if (threat && threat.eta + 0.08 >= (Number(tank.invuln) || 0)) {
+        risk += Math.max(8, 420 / (0.12 + threat.eta) + (28 - Math.min(28, threat.lateral)) * 5);
+      }
     }
     for (const report of (ctx.allyFireReports || [])) {
       const vertical = report.dir === "up" || report.dir === "down";
@@ -3628,8 +3924,78 @@
     return cache.get(key);
   }
 
+  function projectedMuzzleThreat(ctx, tank, dir, moveScale = 1) {
+    if (!tank?.alive || isInvulnerable(tank) || (Number(ctx.freezeTime) || 0) > 0) return null;
+    const enemies = visibleEnemies(ctx).filter((enemy) => enemy?.alive && DIRS[enemy.dir]
+      && (Number(enemy.cooldown) || 0) <= 0.18
+      && manhattan(tank, enemy) <= TILE * 9);
+    if (!enemies.length) return null;
+    const actualDir = movementDirectionDuringTurn(tank, dir);
+    const move = DIRS[actualDir];
+    const speed = move ? Math.max(0, Number(tank.speed || tank.baseSpeed) || 90)
+      * Math.max(0.15, Math.min(1, Number(moveScale) || 1)) : 0;
+    let earliest = null;
+    for (const time of [0.12, 0.25, 0.4, 0.55]) {
+      const projected = {
+        ...tank,
+        x: tank.x + (move?.x || 0) * speed * time,
+        y: tank.y + (move?.y || 0) * speed * time,
+      };
+      if (move && !advisorSearchRectPassable(ctx, tank, projected.x, projected.y)) break;
+      const point = center(projected);
+      for (const enemy of enemies) {
+        const vector = DIRS[enemy.dir];
+        const muzzle = center(enemy);
+        const axial = (point.x - muzzle.x) * vector.x + (point.y - muzzle.y) * vector.y;
+        if (axial < 12 || axial > TILE * 8) continue;
+        const lateral = Math.abs((point.x - muzzle.x) * vector.y
+          - (point.y - muzzle.y) * vector.x);
+        if (lateral > (vector.x ? Number(tank.h) || 28 : Number(tank.w) || 28) / 2 + 7) continue;
+        const flight = axial / 310;
+        if ((Number(enemy.cooldown) || 0) > time - flight + 0.08) continue;
+        if (firstShotObstacle(ctx, enemy, enemy.dir, projected)) continue;
+        if (!earliest || time < earliest.time) earliest = { enemy, time };
+      }
+      if (earliest) break;
+    }
+    return earliest;
+  }
+
+  function avoidEnemyMuzzleLane(ctx, action) {
+    if (!action || action.hold || !DIRS[action.dir]
+      || /freeze-pickup|base-shield|base-bullet-intercept/.test(String(action.mode || ""))) return action;
+    const tank = ctx.tank;
+    const threat = projectedMuzzleThreat(ctx, tank, action.dir, action.moveScale);
+    if (!threat || threat.time > 0.5
+      || projectedMuzzleThreat(ctx, tank, null)) return action;
+    const target = action.target;
+    const lethalShot = action.fire && target === threat.enemy && Number(target.hp) <= 1
+      && tank.dir === action.dir && (Number(tank.turnCooldown) || 0) <= 0
+      && Boolean(ctx.canFire?.()) && Boolean(ctx.canDirectShoot?.(action.dir, target))
+      && !firstShotObstacle(ctx, tank, action.dir, target)
+      && (Number(target.cooldown) || 0) > manhattan(tank, target) / 310 + 0.1;
+    if (lethalShot) return action;
+    const alternatives = DIR_NAMES.filter((dir) => dir !== action.dir
+      && ctx.canMove?.(dir)
+      && !projectedMuzzleThreat(ctx, tank, dir, action.moveScale)
+      && !movementBulletThreat(ctx, tank, dir, 0.9))
+      .sort((a, b) => {
+        const nextDistance = (dir) => target?.alive
+          ? projectedTargetDistance(tank, target, dir) : 0;
+        return nextDistance(a) - nextDistance(b)
+          || Number(b === tank.dir) - Number(a === tank.dir);
+      });
+    if (alternatives.length) {
+      const dir = alternatives[0];
+      return { ...action, dir, moveDir: dir, fire: false, hold: false,
+        mode: "core-muzzle-lane-detour" };
+    }
+    if (/bullet|dodge|evade/.test(String(action.mode || ""))) return action;
+    return { ...action, dir: tank.dir, moveDir: null, fire: false, hold: true,
+      mode: "core-muzzle-lane-hold" };
+  }
+
   function calculateMovementBulletThreat(ctx, tank, dir, horizon = 0.9) {
-    if (isInvulnerable(tank)) return null;
     const hostileBullets = movementProjectiles(ctx, tank);
     if (!hostileBullets.length) return null;
     const actualDir = movementDirectionDuringTurn(tank, dir);
@@ -3683,6 +4049,7 @@
         }
         if (enter <= exit && start + enter < end) {
           const eta = start + enter;
+          if (eta + 0.08 < (Number(tank.invuln) || 0)) continue;
           if (!earliest || eta < earliest.eta) earliest = { bullet, eta };
         }
       }
@@ -4144,7 +4511,6 @@
       if (cellX < 0 || cellY < 0 || cellX >= ctx.cols || cellY >= ctx.rows) return false;
       const tile = ctx.tileAt?.(cellX, cellY) ?? ctx.map?.[cellY]?.[cellX] ?? "S";
       if (tile !== "." && tile !== "F") return false;
-      if (isGuardCell(ctx, cellX, cellY)) return false;
     }
     return true;
   }
@@ -4638,6 +5004,15 @@
     return "";
   }
 
+  function teammateCanFinishAssignedThreat(ctx, enemy) {
+    const threat = (ctx.globalThreats || []).find((item) => item.enemy === enemy);
+    if (!threat || !Number.isFinite(threat.responseDeadline)) return false;
+    return (ctx.friends || []).some((ally) => ally?.alive
+      && ctx.globalAssignments?.get(ally)?.target === enemy
+      && defenderResponseEta(planningContextForAlly(ctx, ally), ally, threat)
+        + 0.25 <= threat.responseDeadline);
+  }
+
   function advisorBaseDefenseTarget(ctx, tank, lockedTarget) {
     const visible = visibleEnemies(ctx);
     const candidates = visible.filter((enemy) => isBaseIntruder(ctx, enemy)).map((enemy) => {
@@ -4663,6 +5038,8 @@
       : null;
     if (terminal.length) {
       const lead = terminal[0];
+      if (assigned && terminal.includes(assigned) && assigned !== lead
+        && teammateCanFinishAssignedThreat(ctx, lead.enemy)) return assigned.enemy;
       return terminal.find((item) => item === assigned
         && item.defenseTier === lead.defenseTier
         && Boolean(item.direct?.target === "base") === Boolean(lead.direct?.target === "base"))?.enemy
@@ -4775,6 +5152,7 @@
     if (!step.aligning && !defenseCtx.canMove?.(step.dir)) return null;
     return {
       enemy,
+      route: path,
       action: {
         dir: step.dir,
         moveDir: step.dir,
@@ -5150,6 +5528,22 @@
     return [...unique.values()];
   }
 
+  function advisorBaseSideEmergencyGoals(ctx, enemy) {
+    const guard = ctx.baseGuard;
+    if (!guard || !enemy?.alive) return [];
+    const top = Math.max(0, Math.floor(guard.y / TILE) - 1);
+    const bottom = Math.min(ctx.rows - 1, Math.floor((guard.y + guard.h - 1) / TILE));
+    const left = Math.floor(guard.x / TILE) - 1;
+    const right = Math.floor((guard.x + guard.w - 1) / TILE) + 1;
+    const goals = [];
+    for (const x of [left, right]) {
+      for (let y = top; y <= bottom; y++) {
+        if (tileCost(ctx, x, y) === 1) goals.push({ x, y });
+      }
+    }
+    return goals;
+  }
+
   function advisorDefenseHold(enemy, reason = "defense-replan") {
     return {
       action: {
@@ -5239,15 +5633,26 @@
     const missionPlan = ctx.globalDirective?.target === enemy
       ? ctx.globalDirective?.mission?.plan
       : null;
-    const plan = missionPlan?.path?.length
+    let plan = missionPlan?.path?.length
       ? missionPlan
       : ctx.globalDirective?.target === enemy && ctx.globalDirective?.intercept?.path?.length
       ? ctx.globalDirective.intercept
       : cachedReliableDefensePlan(planningContextForAlly(defenseCtx, tank), tank, threat);
+    const endpoint = plan?.path?.at(-1);
+    const enemyCell = cellOf(enemy);
+    if (endpoint && (threat.direct?.target === "base"
+      || manhattan(enemy, ctx.base) <= TILE * 3.25)
+      && Math.abs(endpoint.x - enemyCell.x) + Math.abs(endpoint.y - enemyCell.y) > 3) {
+      const fresh = terminalEngagementPlan(defenseCtx, tank, threat);
+      if (fresh?.path?.length) plan = fresh;
+    }
     const fallbackGoals = advisorDefenseFallbackGoals(defenseCtx, enemy);
     let path = advisorCurrentPath(defenseCtx, tank, plan?.path, fallbackGoals);
     if (path.length < 2 && fallbackGoals.length) {
       path = findRelocationPath(defenseCtx, tank, fallbackGoals);
+    }
+    if (path.length < 2 && (threat.direct || manhattan(enemy, ctx.base) <= TILE * 6)) {
+      path = findRelocationPath(defenseCtx, tank, advisorBaseSideEmergencyGoals(defenseCtx, enemy));
     }
     if (path.length < 2) {
       const contactAction = advisorTerminalContactAction(defenseCtx, tank, enemy);
@@ -5328,6 +5733,7 @@
       return advisorDefenseHold(enemy, "defense-step-blocked");
     }
     return {
+      route: path,
       action: {
         dir: step.dir,
         moveDir: step.dir,
@@ -5413,8 +5819,12 @@
       return proposal.category === "base-shield" ? 1000
         : proposal.category === "freeze-control" ? 970 : 950;
     }
+    if (proposal.kind === "base-lane-shot") return 930;
+    if (proposal.kind === "near-lane-shot") return 900;
+    if (proposal.kind === "opportunity-shot") return 890;
     if (proposal.kind === "base-defense") return 880;
     if (proposal.kind === "reliable-return") return 840;
+    if (proposal.kind === "top-screen") return 650;
     if (proposal.kind === "combat") return 620;
     if (proposal.kind === "rear-recovery") return 520;
     return 200;
@@ -5432,7 +5842,9 @@
   function advisorProposalAllowed(proposal, posture) {
     const action = proposal.action;
     if (!action) return false;
-    if (proposal.kind === "critical" || proposal.kind === "base-defense"
+    if (proposal.kind === "critical" || proposal.kind === "base-lane-shot"
+      || proposal.kind === "opportunity-shot"
+      || proposal.kind === "near-lane-shot" || proposal.kind === "base-defense"
       || advisorProtectedAction(action)) return true;
     if (posture.urgent) {
       if (proposal.kind === "reliable-return") return true;
@@ -5543,6 +5955,87 @@
       });
     }
 
+    if (tank?.alive && ctx.base && ctx.canFire?.()) {
+      const safeShot = visibleEnemies(ctx).filter((enemy) => enemy?.alive
+        && manhattan(enemy, ctx.base) <= TILE * 4.5)
+        .flatMap((enemy) => DIR_NAMES.filter((dir) => ctx.canDirectShoot?.(dir, enemy)
+          && !firstShotObstacle(ctx, tank, dir, enemy))
+          .map((dir) => ({ enemy, dir })))
+        .sort((a, b) => baseThreatEta(ctx, a.enemy) - baseThreatEta(ctx, b.enemy)
+          || manhattan(a.enemy, ctx.base) - manhattan(b.enemy, ctx.base)
+          || Number(b.dir === tank.dir) - Number(a.dir === tank.dir))[0];
+      if (safeShot && !(baseline?.fire && baseline.target === safeShot.enemy)) {
+        const ready = tank.dir === safeShot.dir && (Number(tank.turnCooldown) || 0) <= 0;
+        proposals.push({
+          kind: "base-lane-shot",
+          action: { dir: safeShot.dir, fire: ready, hold: true,
+            mode: ready ? "core-base-lane-safe-fire" : "core-base-lane-safe-aim",
+            target: safeShot.enemy },
+          lockedTarget: safeShot.enemy,
+          retarget: safeShot.enemy,
+          reason: "verified-base-lane-shot",
+        });
+      }
+    }
+
+    if (tank?.alive) {
+      const closeShot = visibleEnemies(ctx).filter((enemy) => enemy?.alive
+        && manhattan(tank, enemy) <= TILE * 2.2)
+        .flatMap((enemy) => DIR_NAMES.filter((dir) => ctx.canDirectShoot?.(dir, enemy)
+          && !firstShotObstacle(ctx, tank, dir, enemy))
+          .map((dir) => ({ enemy, dir })))
+        .sort((a, b) => manhattan(tank, a.enemy) - manhattan(tank, b.enemy)
+          || Number(b.dir === tank.dir) - Number(a.dir === tank.dir))[0];
+      const alreadyEngaging = closeShot && baseline?.target === closeShot.enemy
+        && baseline.dir === closeShot.dir
+        && (baseline.fire || /aim|armor-volley|terminal-base|pointblank/
+          .test(String(baseline.mode || "")));
+      const urgentOtherThreat = posture.urgent && posture.assigned?.enemy?.alive
+        && posture.assigned.enemy !== closeShot?.enemy;
+      const canSwitchToContact = closeShot && manhattan(tank, closeShot.enemy) <= TILE * 1.3;
+      const ready = closeShot && tank.dir === closeShot.dir
+        && (Number(tank.turnCooldown) || 0) <= 0 && Boolean(ctx.canFire?.());
+      const routeDir = baseline?.moveDir || baseline?.dir;
+      const movingAwayFromLockedShot = closeShot && closeShot.enemy === lockedTarget
+        && !baseline?.hold && DIRS[routeDir]
+        && projectedTargetDistance(tank, closeShot.enemy, routeDir)
+          > manhattan(tank, closeShot.enemy) + 0.5;
+      if ((ready || movingAwayFromLockedShot) && !alreadyEngaging && !urgentOtherThreat
+        && (closeShot.enemy === lockedTarget || canSwitchToContact)) {
+        const movingFire = ready && mobileFireAllowed(ctx, tank, closeShot.enemy, closeShot.dir);
+        proposals.push({
+          kind: "near-lane-shot",
+          action: { dir: closeShot.dir, fire: Boolean(ready), hold: !movingFire,
+            mode: ready ? "core-near-lane-fire" : "core-near-lane-aim",
+            target: closeShot.enemy },
+          lockedTarget: closeShot.enemy,
+          retarget: closeShot.enemy,
+          reason: "verified-close-shot",
+        });
+      }
+    }
+
+    if (tank?.alive && lockedTarget?.alive && ctx.canFire?.()
+      && (Number(tank.turnCooldown) || 0) <= 0) {
+      const passingShot = visibleEnemies(ctx)
+        .filter((enemy) => enemy?.alive && enemy !== lockedTarget
+          && manhattan(tank, enemy) <= TILE * 2.5
+          && ctx.canDirectShoot?.(tank.dir, enemy)
+          && !firstShotObstacle(ctx, tank, tank.dir, enemy))
+        .sort((a, b) => manhattan(tank, a) - manhattan(tank, b))[0];
+      if (passingShot && (!posture.urgent || posture.margin > 0.35
+        || passingShot === posture.assigned?.enemy)) {
+        proposals.push({
+          kind: "opportunity-shot",
+          action: { dir: tank.dir, fire: true, hold: true,
+            mode: "core-opportunistic-fire", target: passingShot },
+          lockedTarget,
+          retarget: null,
+          reason: "nearby-verified-shot",
+        });
+      }
+    }
+
     const defense = advisorBaseDefensePlan(ctx, tank, baseline, lockedTarget, now, state);
     const planned = /** @type {any} */ (defense?.action);
     const changesDefense = Boolean(defense && (
@@ -5555,6 +6048,7 @@
       proposals.push({
         kind: "base-defense",
         action: defense.action,
+        route: defense.route,
         lockedTarget: defense.enemy,
         retarget: defense.enemy,
         reason: defense.reason || "base-defense",
@@ -5566,13 +6060,18 @@
       proposals.push({
         kind: "reliable-return",
         action: reliableReturn.action,
+        route: reliableReturn.route,
         lockedTarget: reliableReturn.enemy,
         retarget: reliableReturn.enemy,
         reason: reliableReturn.reason,
       });
     }
 
-    const rearRecovery = advisorRearRecoveryPlan(ctx, tank, lockedTarget, posture);
+    const frozenAttack = (Number(ctx.freezeTime) || 0) > 0
+      && baseline?.target?.alive && visibleEnemies(ctx).includes(baseline.target)
+      && /^core-freeze-/.test(String(baseline.mode || ""))
+      && (baseline.fire || (!baseline.hold && DIRS[baseline.moveDir || baseline.dir]));
+    const rearRecovery = frozenAttack ? null : advisorRearRecoveryPlan(ctx, tank, lockedTarget, posture);
     if (rearRecovery) {
       proposals.push({
         kind: "rear-recovery",
@@ -5582,6 +6081,16 @@
         reason: rearRecovery.reason,
       });
     }
+
+    const topScreen = topScreenPlan(ctx, tank, baseline);
+    if (topScreen) proposals.push({
+      kind: "top-screen",
+      action: topScreen.action,
+      route: topScreen.route,
+      lockedTarget,
+      retarget: null,
+      reason: "separated-spawn-screen",
+    });
 
     const routed = applyAdvisorGlobalRoute(ctx, tank, baseline, lockedTarget, advice, now, state);
     const routedCombat = Boolean(routed.fire)
@@ -5594,7 +6103,16 @@
       reason: routed.mode === "core-advisor-global-route" ? "route-correction" : "confirmed",
     });
 
+    const assignedTarget = ctx.globalDirective?.target;
     const selected = proposals.filter((proposal) => advisorProposalAllowed(proposal, posture))
+      .filter((proposal) => {
+        if (!assignedTarget?.alive || proposal.lockedTarget === assignedTarget
+          || !/^(base-defense|reliable-return|rear-recovery)$/.test(proposal.kind)) return true;
+        return !(ctx.friends || []).some((ally) => ally?.alive
+          && proposal.lockedTarget?.alive
+          && (ally.attackTarget === proposal.lockedTarget
+            || ctx.globalAssignments?.get(ally)?.target === proposal.lockedTarget));
+      })
       .sort((a, b) => advisorProposalPriority(b) - advisorProposalPriority(a))[0];
     if (selected) return selected;
     const emergencyTarget = posture.assigned?.enemy?.alive ? posture.assigned.enemy : null;
@@ -5718,6 +6236,13 @@
     let contactAimUntil = 0;
     let contactMoveDir = null;
     let contactMoveUntil = 0;
+    let meleeTarget = null;
+    let meleeGoal = null;
+    let meleeGoalUntil = 0;
+    let meleeAvoidGoal = null;
+    let meleeTargetCell = null;
+    let meleeCell = null;
+    let meleeCellSince = 0;
     let emergencyAimTarget = null;
     let emergencyAimDir = null;
     let emergencyAimUntil = 0;
@@ -5727,7 +6252,7 @@
     let freezeBurstTarget = null;
     let freezeBurstShots = 0;
     let armorVolleyTarget = null;
-    let armorVolleyShots = 0;
+    let armorVolleyHits = 0;
     let pendingArmorShot = null;
     let freezeCommittedTarget = null;
     let freezePickupBonus = null;
@@ -5770,6 +6295,8 @@
     let loopRecoveryTarget = null;
     let loopRecoveryRoute = [];
     let loopRecoveryGoals = [];
+    let loopRecoveryGoalKey = "";
+    let loopRecoveryGoalCell = null;
     let loopRecoveryUntil = 0;
     let loopRecoveryMapVersion = -1;
     let loopRecoveryFallbackDir = null;
@@ -5790,6 +6317,7 @@
     let defenseRecoveryDir = null;
     let defenseRecoveryUntil = 0;
     let wasFrozen = false;
+    const rejectedAim = { target: null, dir: null, x: 0, y: 0, since: 0 };
     const recordedShieldBullets = new WeakSet();
 
     function setTarget(next, lockUntil = null, force = false, commitMission = false) {
@@ -5890,42 +6418,39 @@
         if (fired) {
           if (armorVolleyTarget !== pendingArmorShot.target) {
             armorVolleyTarget = pendingArmorShot.target;
-            armorVolleyShots = 0;
-          }
-          armorVolleyShots++;
-          if (armorVolleyShots >= 2) {
-            armorVolleyTarget = null;
-            armorVolleyShots = 0;
+            armorVolleyHits = 0;
           }
           pendingArmorShot = null;
         } else if (now >= pendingArmorShot.expiresAt) {
           pendingArmorShot = null;
         }
       }
-      if (!armorVolleyTarget?.alive || armorVolleyTarget.kind !== "armor") {
+      for (const hit of tank.aiArmorHitEvents?.splice(0) || []) {
+        if (hit === armorVolleyTarget) armorVolleyHits++;
+      }
+      if (armorVolleyHits >= 2 || !armorVolleyTarget?.alive || armorVolleyTarget.kind !== "armor") {
         armorVolleyTarget = null;
-        armorVolleyShots = 0;
+        armorVolleyHits = 0;
       }
     }
 
     function keepArmorVolley(ctx, tank, action) {
-      if (!armorVolleyTarget?.alive || armorVolleyShots !== 1
-        || action?.target === armorVolleyTarget) return action;
+      if (!armorVolleyTarget?.alive) return action;
       const tacticalInterrupt = /base-shield|bullet-intercept|dodge|evade|avoid|escape|freeze-pickup/.test(action?.mode || "");
-      const emergencyInterrupt = action?.target?.alive
-        && (directBaseShotThreat(ctx, action.target) || isBaseEmergency(ctx, action.target));
-      if (tacticalInterrupt || emergencyInterrupt) return action;
+      if (tacticalInterrupt) return action;
+      if (action?.target === armorVolleyTarget
+        && (action.fire || (!action.hold && (action.moveDir || action.dir)))) return action;
       const shotDir = currentPositionShot(ctx, tank, armorVolleyTarget)
         || predictiveShot(ctx, tank, armorVolleyTarget);
       if (shotDir) {
         mode = "core-armor-volley";
         return aimedFireAction(ctx, tank, shotDir, mode, armorVolleyTarget, true);
       }
-      if (action?.fire) {
-        mode = "core-armor-volley-reacquire";
-        return { ...action, fire: false, mode, target: armorVolleyTarget };
-      }
-      return action;
+      const reposition = shotLaneRepositionPlan(ctx, tank, armorVolleyTarget);
+      if (reposition?.path?.length) publishRoute(ctx, tank, reposition.path);
+      mode = "core-armor-volley-reacquire";
+      return { dir: reposition?.dir || tank.dir, moveDir: reposition?.dir || null,
+        fire: false, hold: !reposition, mode, target: armorVolleyTarget };
     }
 
     function stabilizeMovement(ctx, tank, action, now) {
@@ -5969,11 +6494,10 @@
       const currentDistance = movementGoal ? manhattan(tank, movementGoal) : Infinity;
 
       if (loopRecoveryTarget === activeTarget && now < loopRecoveryUntil) {
-        const immediateShot = activeTarget?.alive
+        const closeShotDir = activeTarget?.alive
           && manhattan(tank, activeTarget) <= TILE * 2.2
-          && tank.dir === currentPositionShot(ctx, tank, activeTarget)
-          && (tank.turnCooldown || 0) <= 0 && ctx.canFire?.();
-        if (immediateShot) {
+          ? currentPositionShot(ctx, tank, activeTarget) : null;
+        if (closeShotDir === tank.dir && (tank.turnCooldown || 0) <= 0 && ctx.canFire?.()) {
           movementTurns = [];
           loopRecoveryTarget = null;
           loopRecoveryRoute = [];
@@ -5982,13 +6506,55 @@
           loopRecoveryFallbackDir = null;
           return aimedFireAction(ctx, tank, tank.dir, "core-defense-loop-shot", activeTarget, true);
         }
-        if (loopRecoveryMapVersion !== Number(ctx.mapVersion || 0)) {
+        if (closeShotDir && ctx.canFire?.() && (Number(ctx.freezeTime) || 0)
+          > turnTime(tank.dir, closeShotDir) + (Number(tank.turnCooldown) || 0)
+            + manhattan(tank, activeTarget) / 310 + 0.15) {
+          return { dir: closeShotDir, moveDir: null, fire: false, hold: true,
+            mode: "core-freeze-loop-aim", target: activeTarget };
+        }
+        const targetCell = activeTarget?.alive ? cellOf(activeTarget) : null;
+        const goalKey = interceptEndpoint
+          ? `intercept:${interceptEndpoint.x},${interceptEndpoint.y}`
+          : targetCell ? `target:${targetCell.x},${targetCell.y}` : "";
+        const goalCell = interceptEndpoint || targetCell;
+        const goalShift = goalCell && loopRecoveryGoalCell
+          ? Math.abs(goalCell.x - loopRecoveryGoalCell.x)
+            + Math.abs(goalCell.y - loopRecoveryGoalCell.y) : Infinity;
+        if (goalKey.split(":")[0] !== loopRecoveryGoalKey.split(":")[0]
+          || (goalKey !== loopRecoveryGoalKey && goalShift >= 2)) {
+          loopRecoveryGoals = interceptEndpoint
+            ? [interceptEndpoint]
+            : activeTarget?.alive
+              ? [...closeCombatGoals(ctx, tank, activeTarget), ...pursuitGoals(ctx, activeTarget)]
+              : [];
+          loopRecoveryGoalKey = goalKey;
+          loopRecoveryGoalCell = goalCell;
+          loopRecoveryFallbackDir = null;
+          loopRecoveryRoute = loopRecoveryGoals.length
+            ? findPath(ctx, cellOf(tank), loopRecoveryGoals) : [];
+          loopRecoveryMapVersion = Number(ctx.mapVersion || 0);
+        } else if (loopRecoveryMapVersion !== Number(ctx.mapVersion || 0)) {
           loopRecoveryRoute = loopRecoveryGoals.length
             ? findPath(ctx, cellOf(tank), loopRecoveryGoals)
             : [];
           loopRecoveryMapVersion = Number(ctx.mapVersion || 0);
         } else if (loopRecoveryRoute.length) {
           loopRecoveryRoute = advisorCurrentPath(ctx, tank, loopRecoveryRoute, loopRecoveryGoals);
+        }
+        // A completed route must not reuse its last leg and overshoot the firing cell.
+        if (loopRecoveryRoute.length === 1) {
+          if (closeShotDir) {
+            return { dir: closeShotDir, moveDir: null, fire: false, hold: true,
+              mode: "core-route-loop-aim", target: activeTarget };
+          }
+          loopRecoveryTarget = null;
+          loopRecoveryRoute = [];
+          loopRecoveryGoals = [];
+          loopRecoveryUntil = 0;
+          loopRecoveryFallbackDir = null;
+          movementTurns = [];
+          lastMovementDecisionDir = movementDir;
+          return action;
         }
         const committedStep = routeStep(ctx, tank, loopRecoveryRoute, 1.5, activeTarget, false);
         const committedDir = committedStep.dir || loopRecoveryFallbackDir;
@@ -6068,6 +6634,11 @@
         : activeTarget?.alive
           ? [...closeCombatGoals(ctx, tank, activeTarget), ...pursuitGoals(ctx, activeTarget)]
           : [];
+      const initialCell = activeTarget?.alive ? cellOf(activeTarget) : null;
+      loopRecoveryGoalKey = interceptEndpoint
+        ? `intercept:${interceptEndpoint.x},${interceptEndpoint.y}`
+        : initialCell ? `target:${initialCell.x},${initialCell.y}` : "";
+      loopRecoveryGoalCell = interceptEndpoint || initialCell;
       loopRecoveryRoute = loopRecoveryGoals.length
         ? findPath(ctx, cellOf(tank), loopRecoveryGoals)
         : [];
@@ -6970,7 +7541,10 @@
         manhattan(tank, item.enemy) <= TILE * 2.2 || bodyGap(tank, item.enemy) <= TILE * 0.45)[0] || null;
       const terminalBaseThreats = candidates.filter((item) =>
         item.direct?.target === "base" && item.direct.eta <= 1.1);
-      const sharedTerminal = terminalBaseThreats.length === 1 ? terminalBaseThreats[0] : null;
+      const sharedTerminal = terminalBaseThreats.length === 1
+        && !(assignedIntruder && assignedIntruder !== terminalBaseThreats[0]
+          && teammateCanFinishAssignedThreat(ctx, terminalBaseThreats[0].enemy))
+        ? terminalBaseThreats[0] : null;
       const teammateTargets = new Set((ctx.friends || []).map((ally) => ally?.attackTarget)
         .filter((enemy) => enemy?.alive));
       const reservedTargets = new Set((ctx.reservedTargets || []).filter((enemy) => enemy?.alive));
@@ -7170,6 +7744,26 @@
       const criticalCounter = Boolean(!crossingOnly && threat && counterDir && ctx.canFire?.()
         && tank.dir === counterDir && (Number(tank.turnCooldown) || 0) <= 0);
 
+      if (threat && mode === "core-evade-bullet-rear" && tacticalState === "EVADE"
+        && evadeDir && now < stateUntil && evadeDir !== bullet.dir
+        && evadeDir !== opposite(bullet.dir) && ctx.canMove?.(evadeDir)
+        && !movementBulletThreat(ctx, tank, evadeDir, 1.15)) {
+        return { dir: evadeDir, fire: false, hold: false, mode, target: preferredTarget };
+      }
+
+      // A shell following the tank catches up while a 180-degree countershot
+      // is being aimed. Leave its lane first when a lateral route is safe.
+      if (threat && bullet.dir === tank.dir && threat.forward > 0) {
+        const sidestep = dodgeDirection(ctx, tank, bullet, preferredTarget);
+        if (sidestep) {
+          tacticalState = "EVADE";
+          evadeDir = sidestep;
+          stateUntil = now + 0.4;
+          mode = "core-evade-bullet-rear";
+          return { dir: sidestep, fire: false, hold: false, mode, target: preferredTarget };
+        }
+      }
+
       if (!crossingOnly && canCounterInTime) {
         tacticalState = "ENGAGE";
         evadeDir = null;
@@ -7314,6 +7908,7 @@
         }
         const globalState = analyzeGlobalBattle(ctx, now);
         ctx.globalDirective = globalState.assignments.get(tank) || null;
+        ctx.globalAssignments = globalState.assignments;
         ctx.globalThreats = globalState.threats;
         const immediateLocalEnemies = allVisibleEnemies(ctx).filter((enemy) =>
           manhattan(tank, enemy) <= TILE * 2.2 || bodyGap(tank, enemy) <= TILE * 0.45);
@@ -7821,7 +8416,8 @@
           setTarget(closeOpportunity.enemy, now + 0.65, true);
           closeLockUntil = now + 0.65;
         }
-        const finalEnemy = visibleEnemies(ctx).length === 1;
+        const finalEnemy = (ctx.enemies || []).filter((enemy) => enemy?.alive).length === 1
+          && visibleEnemies(ctx).length === 1;
         const advanceThreats = advanceSafetyThreats(ctx);
         const assignedSafetyThreat = assignedAdvanceSafetyThreat(ctx, tank, advanceThreats);
         const baseAdvanceSafe = advanceThreats.length === 0;
@@ -7999,9 +8595,8 @@
         }
         const assignedDefensePlan = ctx.globalDirective?.target === target
           && Boolean(ctx.globalDirective.intercept?.path?.length);
-        const interceptEligible = !closeCombat && !baseMeleeEmergency
-          && (assignedDefensePlan
-            || (!crossedMidline(ctx, target) && (patrolPressure || !finalEnemy)));
+        const interceptEligible = !finalEnemy && !closeCombat && !baseMeleeEmergency
+          && (assignedDefensePlan || !crossedMidline(ctx, target));
         if (!interceptEligible) {
           interceptTarget = null;
           interceptPlan = null;
@@ -8084,7 +8679,7 @@
         const emergencyMelee = baseMeleeEmergency ? baseEmergencyMeleeGoals(ctx, target) : [];
         const emergencyFlanks = baseEmergency ? baseEmergencyFlankGoals(ctx, target) : [];
         const fallbackGoals = finalEnemy
-          ? [...closeCombatGoals(ctx, tank, target), ...pursuit]
+          ? [...firingGoals, ...closeCombatGoals(ctx, tank, target), ...pursuit]
           : baseMeleeEmergency && emergencyFlanks.length
           ? [...emergencyFlanks, ...closeCombatGoals(ctx, tank, target), ...pursuit]
           : closeCombat
@@ -8099,6 +8694,14 @@
           : fallbackGoals;
         const routeCommit = patrolPressure ? 0.68 : 0;
         let path = stablePath(ctx, tank, goals, now, routeCommit);
+        if (finalEnemy && path.length === 1 && !currentPositionShot(ctx, tank, target)) {
+          const current = cellOf(tank);
+          const relocationGoals = goals.filter((goal) => goal.x !== current.x || goal.y !== current.y);
+          stableRouteTarget = null;
+          stableRoute = [];
+          stableRouteUntil = 0;
+          path = stablePath(ctx, tank, relocationGoals, now, routeCommit);
+        }
         if (!path.length && emergencyMelee.length) {
           goals = fallbackGoals;
           stableRouteTarget = null;
@@ -8342,6 +8945,77 @@
       return contact || action;
     }
 
+    function immediateMeleeAction(ctx, now) {
+      if (typeof ctx.meleeShot !== "function") return null;
+      const tank = ctx.tank;
+      const close = visibleEnemies(ctx).filter((enemy) =>
+        manhattan(tank, enemy) <= TILE * 2.5);
+      if (!close.length) {
+        meleeTarget = null;
+        meleeGoal = null;
+        meleeAvoidGoal = null;
+        return null;
+      }
+      if (!close.includes(meleeTarget)) {
+        meleeTarget = close.sort((a, b) => manhattan(tank, a) - manhattan(tank, b))[0];
+        meleeGoal = null;
+        meleeAvoidGoal = null;
+      }
+      const enemyCell = cellOf(meleeTarget);
+      const enemyKey = keyOf(enemyCell.x, enemyCell.y);
+      if (enemyKey !== meleeTargetCell) {
+        meleeTargetCell = enemyKey;
+        meleeGoal = null;
+        meleeAvoidGoal = null;
+      }
+      const targets = [meleeTarget, ...close.filter((enemy) => enemy !== meleeTarget)];
+      const directions = [tank.dir, ...DIR_NAMES.filter((dir) => dir !== tank.dir)];
+      const shots = targets.flatMap((enemy) => directions.map((dir) => ({
+        enemy, dir, hit: ctx.meleeShot(dir, enemy),
+      }))).filter((shot) => shot.hit);
+      shots.sort((a, b) => Number(b.hit.type === "enemy") - Number(a.hit.type === "enemy")
+        || Number(a.dir !== tank.dir) - Number(b.dir !== tank.dir)
+        || Number(b.enemy === meleeTarget) - Number(a.enemy === meleeTarget));
+      if (shots.length) {
+        const shot = shots[0];
+        meleeTarget = shot.hit.type === "enemy" ? shot.hit.target : shot.enemy;
+        meleeGoal = null;
+        return { dir: shot.dir, fire: true, hold: true,
+          mode: shot.hit.type === "tile" ? "core-melee-clear" : "core-melee-direct",
+          target: meleeTarget, lockedTarget: meleeTarget };
+      }
+      const current = cellOf(tank);
+      const currentKey = keyOf(current.x, current.y);
+      if (currentKey !== meleeCell) {
+        meleeCell = currentKey;
+        meleeCellSince = now;
+      }
+      if (now - meleeCellSince > 0.65) {
+        meleeAvoidGoal = meleeGoal && keyOf(meleeGoal.x, meleeGoal.y);
+        meleeGoal = null;
+        meleeCellSince = now;
+      }
+      const goals = closeCombatGoals(ctx, tank, meleeTarget)
+        .filter((goal) => keyOf(goal.x, goal.y) !== currentKey
+          && keyOf(goal.x, goal.y) !== meleeAvoidGoal
+          && !steelBlocksShot(ctx, {
+            x: goal.x * TILE + 2, y: goal.y * TILE + 2, w: 28, h: 28,
+          }, meleeTarget, goal.x < enemyCell.x ? "right" : goal.x > enemyCell.x ? "left"
+            : goal.y < enemyCell.y ? "down" : "up"));
+      let path = meleeGoal && now < meleeGoalUntil
+        ? findPath(ctx, current, [meleeGoal]) : [];
+      if (path.length < 2) {
+        path = findPath(ctx, current, goals);
+        meleeGoal = path.at(-1) || null;
+        meleeGoalUntil = now + 1.2;
+      }
+      const step = routeStep(ctx, tank, path, 1.5, meleeTarget, false);
+      if (!step.dir || !ctx.canMove?.(step.dir)) return null;
+      publishRoute(ctx, tank, path);
+      return { dir: step.dir, fire: false, hold: false, mode: "core-melee-route",
+        target: meleeTarget, lockedTarget: meleeTarget };
+    }
+
     function decide(ctx, _dt = 0) {
       // Geometry is fixed during one decision; never carry forecasts to another frame.
       movementForecastCaches.set(ctx, new Map());
@@ -8366,6 +9040,11 @@
           player: name, stage: ctx.stage, time: ctx.gameTime, tank: ctx.tank,
           target: feedback.target, reason: feedback.outcome,
         });
+      }
+      const immediate = immediateMeleeAction(ctx, Number(ctx?.gameTime) || 0);
+      if (immediate) {
+        shotFeedback.expect(ctx, immediate);
+        return immediate;
       }
       /** @type {any} */
       let action = decideRaw(ctx);
@@ -8416,7 +9095,9 @@
             w: ctx.tank.w,
             h: ctx.tank.h,
           }
-          : action.target;
+          : action.mode === "core-top-screen-fire"
+            ? { x: ctx.tank.x, y: 0, w: ctx.tank.w, h: ctx.tank.h }
+            : action.target;
         const obstacle = firstShotObstacle(ctx, ctx.tank, action.dir, searchSweepProbe);
         const hardBlocked = obstacle && (obstacle.tile !== "B" || obstacle.baseGuard);
         if (hardBlocked) {
@@ -8528,13 +9209,18 @@
         now,
         advisorState,
       );
-      if (globalPlan.retarget?.alive) {
+      if (globalPlan.retarget?.alive
+        && (!armorVolleyTarget?.alive || globalPlan.retarget === armorVolleyTarget)) {
         if (target !== globalPlan.retarget) setTarget(globalPlan.retarget, now + 1.4, true, true);
         targetLockUntil = Math.max(targetLockUntil, now + 1.4);
         closeLockUntil = Math.max(closeLockUntil, now + 0.8);
       }
       action = globalPlan.action;
       lockedTarget = globalPlan.lockedTarget;
+      action = keepArmorVolley(ctx, ctx.tank, action);
+      if (armorVolleyTarget?.alive && action.target === armorVolleyTarget) {
+        lockedTarget = armorVolleyTarget;
+      }
       if (missedShotRecovery && now < missedShotRecovery.until
         && action.target === missedShotRecovery.target && action.target?.alive
         && !/freeze-pickup|shield|counter|dodge|evade|clear/.test(action.mode || "")
@@ -8552,9 +9238,24 @@
       action = enforceDefenseMissionProgress(ctx, action, now);
       action = capAlignmentMove(action, ctx.tank);
       action = stabilizeMovement(ctx, ctx.tank, action, now);
-      if (action?.target?.alive) lockedTarget = action.target;
+      if (action?.target?.alive && action.mode !== "core-opportunistic-fire") lockedTarget = action.target;
       action = capAlignmentMove(action, ctx.tank);
       action = preventGuardShot(ctx, action);
+      action = releaseRejectedAim(ctx, ctx.tank, action, now, rejectedAim);
+      action = avoidEnemyMuzzleLane(ctx, action);
+      // Global planning and movement stabilization may change the route after
+      // the first forecast. Check the direction that will actually be emitted.
+      const finalRouteDir = action?.moveDir || action?.dir;
+      const finalCrossing = !urgentFreezePickup && !action?.hold && finalRouteDir
+        && !/base-shield|base-bullet-intercept/.test(String(action.mode || ""))
+        ? movementBulletThreat(ctx, ctx.tank, finalRouteDir, 0.9)
+        : null;
+      if (finalCrossing) {
+        const response = incomingBulletAction(ctx, ctx.tank, finalCrossing.bullet,
+          now, action.target, true);
+        action = response || { ...action, dir: ctx.tank.dir, moveDir: null,
+          fire: false, hold: true, mode: "core-predictive-bullet-yield" };
+      }
       const autonomyObservation = observeAutonomousControl(
         ctx,
         ctx.tank,
@@ -8589,6 +9290,17 @@
           cooldownBefore: Number(ctx.tank.cooldown) || 0,
           expiresAt: now + 0.12,
         };
+      }
+      const actionDir = action?.moveDir || action?.dir;
+      const plannedDir = globalPlan.action?.moveDir || globalPlan.action?.dir;
+      const selectedRoute = globalPlan.route?.length > 1 && actionDir === plannedDir
+        && !action.hold ? globalPlan.route : null;
+      if (globalPlan.kind === "base-defense" || globalPlan.kind === "reliable-return") {
+        if (action.mode !== "core-guard-shot-reposition") ctx.plannedRoute = null;
+        if (selectedRoute) publishRoute(ctx, ctx.tank, selectedRoute);
+      }
+      if (globalPlan.kind === "base-lane-shot" || globalPlan.kind === "near-lane-shot") {
+        publishRoute(ctx, ctx.tank, [cellOf(ctx.tank)]);
       }
       publishActionRoute(ctx, ctx.tank, lockedTarget, now);
       shotFeedback.expect(ctx, action);
@@ -8698,6 +9410,12 @@
       previewMovementBulletThreat(ctx, dir, horizon = 0.9) {
         return movementBulletThreat(ctx, ctx.tank, dir, horizon);
       },
+      previewTopScreen(ctx, baseline = {}) {
+        return topScreenPlan(ctx, ctx.tank, baseline);
+      },
+      previewEnemyMuzzleMoveGate(ctx, action) {
+        return avoidEnemyMuzzleLane(ctx, action);
+      },
       previewRouteStep(ctx, path) {
         return routeStep(ctx, ctx.tank, path);
       },
@@ -8726,6 +9444,12 @@
       previewBaseDefenseProfile(ctx, enemy) {
         return baseDefenseProfile(ctx, enemy);
       },
+      previewBaseDangerField(ctx, speed = 72) {
+        return baseDangerField(ctx, speed);
+      },
+      previewGlobalAssignmentCost(ctx, tank, threat) {
+        return globalAssignmentCost(ctx, tank, threat);
+      },
       previewReliableIntercept(ctx, tank, enemy) {
         const threat = { enemy, ...baseDefenseProfile(ctx, enemy) };
         return reliableDefensePlan(planningContextForAlly(ctx, tank), tank, threat);
@@ -8739,6 +9463,9 @@
       previewTerminalShare(threat, threats) {
         return canShareTerminalThreat(threat, threats);
       },
+      previewTerminalCandidateOrder(candidates) {
+        return [...candidates].sort(compareTerminalEngagementCandidates);
+      },
       previewDefenseMission(ctx, tank, enemy, reservedCells = []) {
         const threat = { enemy, ...baseDefenseProfile(ctx, enemy) };
         return buildDefenseMission(
@@ -8748,11 +9475,17 @@
           new Set(reservedCells),
         );
       },
+      previewMissionSeparation(primary, alternate, occupiedCells, deadline) {
+        return chooseSeparatedMission(primary, alternate, new Set(occupiedCells), deadline);
+      },
       previewGlobalBattle(ctx, now = Number(ctx?.gameTime) || 0) {
         return analyzeGlobalBattle(ctx, now);
       },
       previewDefenseCoverage(matrix, deadlines) {
         return solveDefenseCoverage(matrix, deadlines);
+      },
+      previewNearBaseCommit(committed, selected) {
+        return protectsNearBaseCommit(committed, selected);
       },
       previewMapEntryGoals(ctx) {
         return baseEntryGoals(ctx);
@@ -8832,14 +9565,10 @@
     const label = document.getElementById("aiUpdatedInfo");
     if (!label) return;
     const host = /** @type {any} */ (window);
-    const panel = label.closest(".ai-version-panel");
-    const playfield = label.closest(".playfield");
     label.style.display = "grid";
     label.style.alignContent = "center";
     label.style.gap = "2px";
     label.style.lineHeight = "1";
-    if (panel instanceof HTMLElement) panel.style.minHeight = "38px";
-    if (playfield instanceof HTMLElement) playfield.style.gridTemplateRows = "auto auto 38px";
     host.__fcAiVersionObserver?.disconnect?.();
     const reasonLabels = {
       "no-candidate": "等待分析",
@@ -8857,6 +9586,13 @@
       return `${Number((count / 1000000).toFixed(1))}M`;
     };
     const render = () => {
+      if (host.TankPartnerAI?.__engine === "AI-V3") {
+        const updatedAt = host.FCHotUpgradeVersion?.v3?.updatedAtBeijing;
+        const text = updatedAt
+          ? `V3 ${String(updatedAt).replace(/(:\d{2})?\s+CST$/i, "")}` : "V3 时间待同步";
+        if (label.textContent !== text) label.textContent = text;
+        return;
+      }
       const info = host.FCHotUpgradeVersion?.ai;
       const digits = String(info?.version || info?.hash || "").replace(/\D/g, "");
       if (digits.length < 12) return;

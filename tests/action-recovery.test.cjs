@@ -12,6 +12,8 @@ function fixture(beforeFinalMovement = false) {
   assert.equal(source.split(marker).length, 2);
   source = source.replace(marker, `${marker}
       testStabilize: stabilizeMovement,
+      testRecoveryRoute() { return loopRecoveryRoute; },
+      testReleaseAim(context, value, now) { return releaseRejectedAim(context, context.tank, value, now, rejectedAim); },
       testSetAction(value) { decideRaw = () => value; },`);
   if (beforeFinalMovement) {
     const end = '      let movementDir = action?.moveDir || action?.dir;';
@@ -72,6 +74,77 @@ test('a verified close shot interrupts a live recovery route before another deto
   assert.equal(action.target, enemy);
 });
 
+test('reaching the loop recovery endpoint releases the old travel direction', () => {
+  const { ctx, tank, enemy, controller } = fixture();
+  for (const [i, dir] of ['left', 'right', 'left', 'right'].entries()) {
+    controller.testStabilize(ctx, tank,
+      { dir, hold: false, fire: false, target: enemy, mode: 'core-contact-approach' }, 1 + i * 0.1);
+  }
+  const route = controller.testRecoveryRoute();
+  assert.ok(route.length > 1);
+  tank.x = route.at(-1).x * 32 + 2;
+  tank.y = route.at(-1).y * 32 + 2;
+  const fresh = { dir: 'right', moveDir: 'right', hold: false, fire: false,
+    target: enemy, mode: 'core-contact-approach' };
+  assert.equal(controller.testStabilize(ctx, tank, fresh, 1.4), fresh);
+  assert.equal(controller.testStabilize(ctx, tank, fresh, 1.5), fresh);
+});
+
+test('loop recovery replans when its locked enemy moves to another cell', () => {
+  const { ctx, tank, enemy, controller } = fixture();
+  for (const [i, dir] of ['left', 'right', 'left', 'right'].entries()) {
+    controller.testStabilize(ctx, tank,
+      { dir, moveDir: dir, hold: false, fire: false, target: enemy,
+        mode: 'core-contact-approach' }, 1 + i * 0.1);
+  }
+  const originalEndpoint = controller.testRecoveryRoute().at(-1);
+  assert.ok(originalEndpoint);
+  enemy.x += 32;
+  controller.testStabilize(ctx, tank,
+    { dir: 'left', moveDir: 'left', hold: false, fire: false, target: enemy,
+      mode: 'core-contact-approach' }, 1.35);
+  assert.equal(controller.testRecoveryRoute().at(-1).x, originalEndpoint.x,
+    'one-cell movement keeps the current firing route stable');
+  enemy.x += 4 * 32;
+  ctx.gameTime = 1.4;
+  controller.testStabilize(ctx, tank,
+    { dir: 'left', moveDir: 'left', hold: false, fire: false, target: enemy,
+      mode: 'core-contact-approach' }, 1.4);
+  const updatedEndpoint = controller.testRecoveryRoute().at(-1);
+  assert.ok(updatedEndpoint);
+  assert.ok(controller.testRecoveryRoute().length > 1,
+    `recovery must keep a usable route after target movement: ${JSON.stringify(updatedEndpoint)}`);
+});
+
+test('a clear frozen close shot finishes aiming instead of orbiting on the recovery route', () => {
+  const { ctx, tank, enemy, controller } = fixture();
+  for (const [i, dir] of ['left', 'right', 'left', 'right'].entries()) {
+    controller.testStabilize(ctx, tank,
+      { dir, hold: false, fire: false, target: enemy, mode: 'core-contact-approach' }, 1 + i * 0.1);
+  }
+  ctx.freezeTime = 4;
+  enemy.x = tank.x + 64;
+  enemy.y = tank.y;
+  ctx.canDirectShoot = (dir, target) => dir === 'right' && target === enemy;
+  const routeAction = { dir: 'left', moveDir: 'left', hold: false, fire: false,
+    target: enemy, mode: 'core-global-defense-route' };
+  ctx.freezeTime = 0.1;
+  assert.notEqual(controller.testStabilize(ctx, tank, routeAction, 1.35).mode,
+    'core-freeze-loop-aim', 'thaw before impact must not force stationary aiming');
+  ctx.freezeTime = 4;
+  const aim = controller.testStabilize(ctx, tank, routeAction, 1.4);
+  assert.equal(aim.dir, 'right');
+  assert.equal(aim.hold, true);
+  assert.equal(aim.fire, false);
+  tank.dir = 'right';
+  tank.turnCooldown = 0.2;
+  assert.equal(controller.testStabilize(ctx, tank, routeAction, 1.5).hold, true);
+  tank.turnCooldown = 0;
+  const shot = controller.testStabilize(ctx, tank, routeAction, 1.75);
+  assert.equal(shot.fire, true);
+  assert.equal(shot.dir, 'right');
+});
+
 test('steel-shot recovery replaces stale movement direction as well as barrel direction', () => {
   const { ctx, tank, enemy, controller } = fixture(true);
   ctx.map[19][8] = 'S';
@@ -116,4 +189,21 @@ test('emergency movement commitment keeps movement and barrel commands coherent'
   assert.equal(next.mode, 'core-chase');
   assert.equal(next.dir, 'down');
   assert.equal(next.moveDir, next.dir);
+});
+
+test('repeated rejected stationary aim turns without changing a valid first shot', () => {
+  const { ctx, tank, enemy, controller } = fixture();
+  const action = { dir: 'right', moveDir: 'right', fire: true, hold: true,
+    mode: 'core-aim-turn', target: enemy };
+  assert.equal(controller.testReleaseAim(ctx, action, 1), action);
+  assert.equal(controller.testReleaseAim(ctx, action, 1.2), action);
+  const recovered = controller.testReleaseAim(ctx, action, 1.36);
+  assert.equal(recovered.fire, false);
+  assert.equal(recovered.hold, true);
+  assert.equal(recovered.dir, 'right');
+  assert.equal(recovered.mode, 'core-aim-turn-recover');
+  tank.x += 5;
+  assert.equal(controller.testReleaseAim(ctx, action, 1.42), action);
+  ctx.canShoot = () => true;
+  assert.equal(controller.testReleaseAim(ctx, action, 1.9), action);
 });

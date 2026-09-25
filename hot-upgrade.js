@@ -134,6 +134,27 @@
     setStatus("AI UP");
   }
 
+  async function applyV3Upgrade(next) {
+    setStatus("V3 LOAD");
+    const previousV3 = window.TankPartnerAIV3;
+    let script;
+    try {
+      script = await loadScript("ai-v3.js", next.v3.version || next.v3.hash, "fc-hot-v3-next");
+      if (!window.TankPartnerAIV3?.createController || window.TankPartnerAIV3 === previousV3) {
+        throw new Error("V3 upgrade did not initialize");
+      }
+      if (!window.FCGameHotAPI?.reloadV3Controllers) throw new Error("V3 controller reload is unavailable");
+      window.FCGameHotAPI.reloadV3Controllers();
+    } catch (error) {
+      window.TankPartnerAIV3 = previousV3;
+      script?.remove();
+      throw error;
+    }
+    state.version = { ...state.version, v3: next.v3 };
+    renderVersion(state.version);
+    setStatus("V3 UP");
+  }
+
   function scheduleGameReload(next) {
     // Game code is replaced only by one page reload at a safe non-playing boundary.
     if (state.reloading) return;
@@ -180,7 +201,6 @@
         setStatus("LOCAL");
         return;
       }
-      renderVersion(next);
       if (state.pendingGame) {
         if (window.FCGameHotAPI?.canApplyGameUpgrade?.() !== false) {
           scheduleGameReload(next);
@@ -191,8 +211,10 @@
           window.FCGameHotAPI?.setPendingGameUpgrade?.(false);
         } else if (!sameVersion(state.version, next, "ai")) {
           await applyAiUpgrade(next);
+        } else if (next.v3 && !sameVersion(state.version, next, "v3")) {
+          await applyV3Upgrade(next);
         }
-        renderVersion({ ...state.pendingGame, ai: next.ai });
+        renderVersion({ ...state.pendingGame, ai: state.version.ai, v3: state.version.v3 });
         setStatus(state.pendingGame ? (window.FCGameHotAPI?.canApplyGameUpgrade?.() === false ? "GAME WAIT" : "GAME NEW") : "READY");
         return;
       }
@@ -204,7 +226,12 @@
         await applyAiUpgrade(next);
         return;
       }
+      if (next.v3 && !sameVersion(state.version, next, "v3")) {
+        await applyV3Upgrade(next);
+        return;
+      }
       state.version = next;
+      renderVersion(next);
       setStatus("READY");
     } catch (error) {
       console.error(error);
@@ -230,7 +257,7 @@
       }
       state.booted = true;
       renderVersion(state.version);
-      setStatus(isServerMode() ? "READY" : "LOCAL");
+      setStatus(window.FCGameHotAPI?.isHotUpgradeEnabled?.() === false ? "OFF" : isServerMode() ? "READY" : "LOCAL");
     } finally {
       state.booting = false;
     }
